@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   patch:
-    if: !startsWith(github.event.head_commit.message, 'Add Stage 4 update and backup controls to app UI')
+    if: ${{ !startsWith(github.event.head_commit.message, 'Add Stage 4 update and backup controls to app UI') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
