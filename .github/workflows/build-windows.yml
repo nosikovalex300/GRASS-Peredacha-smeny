@@ -96,6 +96,8 @@ jobs:
           name: GRASS-Windows-Installer-${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}
           path: |
             dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -107,6 +109,8 @@ jobs:
           name: GRASS — Передача смены ${{ github.ref_name }}
           files: |
             dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
             dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: true
