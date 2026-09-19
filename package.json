@@ -1,6 +1,6 @@
 {
   "name": "grass-shift-handover",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "GRASS — Передача смены — Stage 4 updates and data recovery",
   "main": "main.js",
   "author": "GRASS",
