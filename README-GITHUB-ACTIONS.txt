@@ -1,38 +1,23 @@
-GRASS — автоматическая сборка Windows EXE через GitHub Actions
+GRASS — GitHub Actions / автоматические релизы
 
-Что это даёт
-------------
-После настройки GitHub репозитория Windows-сборка выполняется на сервере GitHub.
-На компьютере сотрудника Node.js, npm, Git и исходники проекта НЕ нужны.
+Что умеет проект:
+- Сборка Windows NSIS-установщика на GitHub Windows runner.
+- Node.js/npm на компьютере сотрудника не нужны.
+- Обычный push в main/master или ручной запуск Actions создаёт Artifact с установщиком.
+- Тег вида vMAJOR.MINOR.PATCH автоматически создаёт GitHub Release.
+- При релизе версия package.json на runner автоматически синхронизируется с тегом.
+- В Release прикладываются Setup.exe и SHA256SUMS.txt.
 
-Workflow
---------
-.github/workflows/build-windows.yml
+Как выпустить новую версию:
+1. Измените проект.
+2. Измените version в package.json на нужную версию, например 1.4.0.
+3. Сделайте commit и push в main.
+4. Создайте тег:
+   git tag v1.4.0
+5. Отправьте тег:
+   git push origin v1.4.0
+6. GitHub Actions автоматически соберёт Windows installer и создаст GitHub Release.
 
-Запуск сборки
--------------
-1. GitHub -> репозиторий GRASS -> вкладка Actions.
-2. Выбрать "Build GRASS for Windows".
-3. Нажать "Run workflow".
-4. После завершения открыть job и скачать Artifact:
-   GRASS-Windows-Installer-<номер запуска>.
-5. Внутри будет:
-   GRASS-Peredacha-smeny-Setup-1.3.0.exe
-   SHA256SUMS.txt
-
-Автоматическая сборка
----------------------
-Workflow также запускается при push в main/master и при Pull Request в main/master.
-
-Релиз
------
-Если создать git-тег вида v1.3.0, workflow соберёт EXE и опубликует его в GitHub Releases.
-
-Важно
------
-Для релизов workflow использует GITHUB_TOKEN. Дополнительный секрет для публикации не требуется.
-
-Пользовательский ПК
--------------------
-После получения EXE сотруднику достаточно запустить установщик.
-Node.js/npm/Git/GitHub на компьютере сотрудника не нужны.
+Важно:
+- Не удаляйте AppData вручную: SQLite-база и backups хранятся отдельно от программы.
+- GitHub Release хранит установщик; это не рабочая база данных приложения.

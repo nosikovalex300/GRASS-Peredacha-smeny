@@ -1,4 +1,4 @@
-name: Build GRASS for Windows
+name: Build and Release GRASS for Windows
 
 on:
   workflow_dispatch:
@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: grass-windows-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     name: Build Windows installer
@@ -23,19 +27,37 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24.x'
           package-manager-cache: false
+
+      - name: Set version from release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw "Invalid release tag: $tag. Expected vMAJOR.MINOR.PATCH"
+          }
+          $version = $tag.Substring(1)
+          npm version $version --no-git-tag-version --allow-same-version
+          Write-Host "Release version: $version"
 
       - name: Show versions
         shell: pwsh
         run: |
           node --version
           npm --version
+          $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          Write-Host "GRASS version: $($pkg.version)"
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $expected = '${{ github.ref_name }}'.Substring(1)
+            if ($pkg.version -ne $expected) { throw "package.json version $($pkg.version) does not match tag $expected" }
+          }
 
       - name: Install dependencies
         run: npm install
@@ -71,19 +93,21 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GRASS-Windows-Installer-${{ github.run_number }}
+          name: GRASS-Windows-Installer-${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}
           path: |
             dist/*.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release for version tag
+      - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: GRASS — Передача смены ${{ github.ref_name }}
           files: |
             dist/*.exe
             dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: true
+          make_latest: true
