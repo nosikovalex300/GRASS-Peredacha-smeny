@@ -104,10 +104,12 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/v1.4.0'
+        if: github.ref == 'refs/heads/v1.4.0' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: GRASS — Передача смены ${{ github.ref_name }}
+          tag_name: v1.4.0
+          target_commitish: ${{ github.sha }}
+          name: GRASS — Передача смены v1.4.0
           files: |
             dist/*.exe
             dist/*.blockmap
