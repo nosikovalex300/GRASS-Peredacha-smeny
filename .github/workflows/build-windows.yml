@@ -105,7 +105,7 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/v1.4.0' || startsWith(github.ref, 'refs/tags/v')
+        if: (github.ref == 'refs/heads/v1.4.0' || github.ref == 'refs/heads/v1.4.1') || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
