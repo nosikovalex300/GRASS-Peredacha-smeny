@@ -1,13 +1,13 @@
 {
   "name": "grass-shift-handover",
-  "version": "1.3.0",
-  "description": "GRASS — Передача смены — Final Windows desktop build",
+  "version": "1.4.0",
+  "description": "GRASS — Передача смены — Stage 4 updates and data recovery",
   "main": "main.js",
   "author": "GRASS",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --x64"
+    "dist:win": "electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "electron": "^38.1.0",
@@ -51,6 +51,16 @@
       "deleteAppDataOnUninstall": false
     },
     "icon": "GRASS_icon.ico",
-    "publish": null
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nosikovalex300",
+        "repo": "GRASS-Peredacha-smeny",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
   }
 }
