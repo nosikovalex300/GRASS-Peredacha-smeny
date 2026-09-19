@@ -1,15 +1,17 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { DatabaseSync, backup } = require('node:sqlite');
 
-const APP_SCHEMA_VERSION = 2;
+const APP_SCHEMA_VERSION = 3;
 const STORAGE_KEY = 'grass_v02';
 const BACKUP_RETENTION = 14;
 
 let database = null;
 let databasePath = '';
 let backupDir = '';
+let mainWindow = null;
 
 function initDatabase() {
   const dataDir = path.join(app.getPath('userData'), 'data');
@@ -310,12 +312,80 @@ function migrateLegacyKeyValueToNormalized() {
   return migrated;
 }
 
+
+function recordSchemaMigration(version, description) {
+  database.prepare('INSERT OR REPLACE INTO schema_migrations(version, applied_at, description) VALUES(?,?,?)')
+    .run(Number(version), new Date().toISOString(), description);
+}
+
+function migrateSchemaSafely() {
+  let current = getSchemaVersion();
+  database.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, description TEXT NOT NULL)');
+
+  if (current < 2) {
+    ensureNormalizedSchema();
+    syncNormalizedFromLegacyKeyValue();
+    const knownSettings = ['technologist','technologists','autoArchiveEnabled','autoArchiveDays','grass_tech_add_collapsed','shift'];
+    for (const key of knownSettings) {
+      const value = dbGetLegacy(key);
+      if (value !== null) database.prepare('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)').run(key, value);
+    }
+    setMeta('legacy_migration_done', '1');
+    setMeta('last_migration', new Date().toISOString());
+    setMeta('schema_version', '2');
+    recordSchemaMigration(2, 'Нормализация структуры SQLite');
+    current = 2;
+  }
+
+  if (current < 3) {
+    database.exec('BEGIN IMMEDIATE');
+    try {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS backup_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          file_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          kind TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_log_created_at ON backup_log(created_at);
+      `);
+      setMeta('schema_version', '3');
+      recordSchemaMigration(3, 'Служебные таблицы миграций и резервных копий');
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+function ensureCurrentSchema() {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL,
+      description TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS backup_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      kind TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_backup_log_created_at ON backup_log(created_at);
+  `);
+}
+
 async function createDatabaseBackup(label = 'daily') {
   if (!database || !backupDir) return null;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const target = path.join(backupDir, `grass-${label}-${stamp}.db`);
   try {
     await backup(database, target, { rate: 200 });
+    try {
+      ensureCurrentSchema();
+      database.prepare('INSERT INTO backup_log(file_name, created_at, kind) VALUES(?,?,?)').run(path.basename(target), new Date().toISOString(), label);
+    } catch (_) {}
     return target;
   } catch (error) {
     console.error('GRASS SQLite backup failed:', error);
@@ -364,6 +434,77 @@ function dbRemove(key) {
     return;
   }
   removeSetting(key);
+}
+
+
+function databaseInfo() {
+  const stat = fs.statSync(databasePath);
+  const backups = fs.existsSync(backupDir) ? fs.readdirSync(backupDir)
+    .filter(name => /^grass-.*\\.db$/i.test(name))
+    .map(name => {
+      const full = path.join(backupDir, name);
+      const st = fs.statSync(full);
+      return { name, path: full, size: st.size, createdAt: st.mtime.toISOString() };
+    })
+    .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
+  return {
+    appVersion: app.getVersion(),
+    databasePath,
+    backupDir,
+    databaseSize: stat.size,
+    schemaVersion: getSchemaVersion(),
+    backups: backups.map(({path: _path, ...item}) => item),
+    lastBackupAt: backups[0]?.createdAt || null,
+    backupCount: backups.length
+  };
+}
+
+async function restoreDatabaseBackup(fileName) {
+  const safeName = path.basename(String(fileName || ''));
+  if (!/^grass-.*\\.db$/i.test(safeName)) throw new Error('Недопустимое имя резервной копии');
+  const source = path.join(backupDir, safeName);
+  if (!fs.existsSync(source)) throw new Error('Резервная копия не найдена');
+
+  const currentBackup = await createDatabaseBackup('before-restore');
+  if (!currentBackup) throw new Error('Не удалось создать резервную копию текущих данных');
+
+  const tempPath = path.join(backupDir, `.restore-${Date.now()}.db`);
+  fs.copyFileSync(source, tempPath);
+  if (database) {
+    try { database.close(); } catch (_) {}
+    database = null;
+  }
+  try {
+    fs.copyFileSync(tempPath, databasePath);
+    fs.unlinkSync(tempPath);
+    initDatabase();
+    if (getSchemaVersion() < APP_SCHEMA_VERSION) {
+      const migrationBackup = await createDatabaseBackup('pre-migration-restore');
+      if (!migrationBackup) throw new Error('Не удалось сохранить восстановленную базу перед миграцией');
+      migrateSchemaSafely();
+    } else {
+      ensureCurrentSchema();
+    }
+    pruneBackups();
+    return { ok: true, restoredFrom: safeName, currentBackup: path.basename(currentBackup), info: databaseInfo() };
+  } catch (error) {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
+    throw error;
+  }
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = console;
+  autoUpdater.on('checking-for-update', () => mainWindow?.webContents.send('grass-update-status', {status:'checking'}));
+  autoUpdater.on('update-available', info => mainWindow?.webContents.send('grass-update-status', {status:'available', version:info.version}));
+  autoUpdater.on('update-not-available', info => mainWindow?.webContents.send('grass-update-status', {status:'up-to-date', version:info.version}));
+  autoUpdater.on('download-progress', p => mainWindow?.webContents.send('grass-update-status', {status:'downloading', percent:Math.round(p.percent || 0)}));
+  autoUpdater.on('update-downloaded', info => mainWindow?.webContents.send('grass-update-status', {status:'downloaded', version:info.version}));
+  autoUpdater.on('error', error => mainWindow?.webContents.send('grass-update-status', {status:'error', message:error?.message || 'Ошибка обновления'}));
+  setTimeout(() => autoUpdater.checkForUpdates().catch(error => console.error('GRASS update check failed:', error)), 5000);
 }
 
 function registerDatabaseIpc() {
@@ -424,6 +565,38 @@ function registerDatabaseIpc() {
     }
     event.returnValue = migrated;
   });
+
+  ipcMain.on('grass-db-info', (event) => {
+    event.returnValue = JSON.stringify(databaseInfo());
+  });
+
+  ipcMain.handle('grass-db-create-backup', async () => {
+    const file = await createDatabaseBackup('manual');
+    if (!file) throw new Error('Не удалось создать резервную копию');
+    pruneBackups();
+    return databaseInfo();
+  });
+
+  ipcMain.handle('grass-db-list-backups', async () => databaseInfo().backups);
+  ipcMain.handle('grass-db-open-backup-folder', async () => {
+    await shell.openPath(backupDir);
+    return true;
+  });
+  ipcMain.handle('grass-db-restore-backup', async (_event, fileName) => restoreDatabaseBackup(fileName));
+  ipcMain.handle('grass-update-check', async () => {
+    if (!app.isPackaged) return {status:'dev'};
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return result?.updateInfo ? {status:'checked', version:result.updateInfo.version, currentVersion:app.getVersion()} : {status:'checked', currentVersion:app.getVersion()};
+    } catch (error) {
+      return {status:'error', message:error?.message || 'Ошибка проверки обновлений', currentVersion:app.getVersion()};
+    }
+  });
+  ipcMain.handle('grass-update-install', async () => {
+    autoUpdater.quitAndInstall(false, true);
+    return true;
+  });
+
 }
 
 function createWindow() {
@@ -444,6 +617,7 @@ function createWindow() {
     }
   });
 
+  mainWindow = win;
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, 'index.html'));
 }
@@ -451,14 +625,17 @@ function createWindow() {
 app.whenReady().then(async () => {
   initDatabase();
 
-  // Before changing the schema for the first time, preserve the existing DB exactly as-is.
+  // Every schema upgrade is protected by a snapshot before migration.
   if (getSchemaVersion() < APP_SCHEMA_VERSION) {
-    await createDatabaseBackup('pre-stage3');
-    migrateLegacyKeyValueToNormalized();
+    await createDatabaseBackup('pre-migration');
+    migrateSchemaSafely();
+  } else {
+    ensureCurrentSchema();
   }
 
   registerDatabaseIpc();
   createWindow();
+  setupAutoUpdater();
   createDailyBackupIfNeeded().catch(error => console.error('GRASS daily backup failed:', error));
 
   app.on('activate', () => {
