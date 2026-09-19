@@ -35,4 +35,35 @@ const grassStorage = {
   }
 };
 
+
+const grassAdmin = {
+  getDatabaseInfo() {
+    return JSON.parse(ipcRenderer.sendSync('grass-db-info'));
+  },
+  createBackup() {
+    return ipcRenderer.invoke('grass-db-create-backup');
+  },
+  listBackups() {
+    return ipcRenderer.invoke('grass-db-list-backups');
+  },
+  openBackupFolder() {
+    return ipcRenderer.invoke('grass-db-open-backup-folder');
+  },
+  restoreBackup(fileName) {
+    return ipcRenderer.invoke('grass-db-restore-backup', String(fileName));
+  },
+  checkForUpdates() {
+    return ipcRenderer.invoke('grass-update-check');
+  },
+  installUpdate() {
+    return ipcRenderer.invoke('grass-update-install');
+  },
+  onUpdateStatus(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('grass-update-status', listener);
+    return () => ipcRenderer.removeListener('grass-update-status', listener);
+  }
+};
+
 contextBridge.exposeInMainWorld('grassStorage', grassStorage);
+contextBridge.exposeInMainWorld('grassAdmin', grassAdmin);
