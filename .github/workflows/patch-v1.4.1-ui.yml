@@ -1,0 +1,61 @@
+name: Patch v1.4.1 UI
+
+on:
+  push:
+    branches:
+      - v1.4.1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: !startsWith(github.event.head_commit.message, 'Add Stage 4 update and backup controls to app UI')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.4.1
+
+      - name: Inject Stage 4 UI
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("index.html")
+          c = p.read_text(encoding="utf-8")
+          marker = "id=\"updateStatus\""
+          if marker in c:
+              print("Stage 4 UI already present")
+              raise SystemExit(0)
+
+          settings_start = c.rfind('<main id="screen-settings"')
+          settings_end = c.find("</main>", settings_start)
+          nav_pos = c.find("<nav>", settings_end)
+          if settings_start < 0 or settings_end < 0 or nav_pos < 0:
+              raise RuntimeError("Settings screen markers not found")
+
+          admin_html = '''<div class="settings-card admin-card"><div class="settings-row"><div><b>Обновление приложения</b><span id="updateStatus">Проверка доступности обновлений…</span></div><div class="admin-actions"><strong id="appVersion">v1.4.1</strong><button type="button" id="checkUpdateBtn" class="settings-action-btn">Проверить</button><button type="button" id="installUpdateBtn" class="settings-action-btn add" style="display:none">Перезапустить сейчас</button></div></div></div><div class="settings-card admin-card"><div class="settings-row"><div><b>Данные и резервные копии</b><span id="dbInfoText">Информация о базе данных загружается…</span></div><div class="admin-actions"><button type="button" id="createBackupBtn" class="settings-action-btn">Создать резервную копию</button><button type="button" id="openBackupFolderBtn" class="settings-action-btn">Открыть папку</button><button type="button" id="restoreBackupBtn" class="settings-action-btn">Восстановить данные</button></div></div><div class="admin-db-details"><span>База: <b id="dbSize">—</b></span><span>Схема: <b id="dbSchema">—</b></span><span>Резервных копий: <b id="dbBackupCount">—</b></span><span>Последняя копия: <b id="dbLastBackup">—</b></span></div></div>'''
+          c = c[:settings_end] + admin_html + c[settings_end:]
+
+          restore_dialog = '''<dialog id="restoreBackupDlg"><form method="dialog"><div class="dlghead"><h2>Восстановление данных</h2><button type="button" id="restoreBackupClose">×</button></div><p class="muted">Перед восстановлением текущая база автоматически сохранится в отдельную резервную копию.</p><div id="backupList" class="backup-list"></div><div class="buttons"><button type="button" id="restoreBackupCancel">Отмена</button><button type="button" id="restoreBackupConfirm" class="add">↻ &nbsp; Восстановить выбранную</button></div></form></dialog>'''
+          c = c[:nav_pos] + restore_dialog + c[nav_pos:]
+
+          css = '''\n.admin-card .settings-row{align-items:flex-start}.admin-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.settings-action-btn{border:1px solid #355348;background:#0a261d;color:#dcebe5;border-radius:9px;padding:9px 12px;font:inherit;cursor:pointer}.settings-action-btn:hover{border-color:#2dd97c;box-shadow:0 0 12px #00d96b22}.settings-action-btn:disabled{opacity:.45;cursor:not-allowed}.admin-actions>strong{font-size:12px;color:#72dba3;padding:0 4px}.admin-db-details{display:flex;gap:18px;flex-wrap:wrap;padding:0 18px 14px;color:#81978e;font-size:10px}.admin-db-details b{color:#cfe3da;font-weight:600}.backup-list{display:flex;flex-direction:column;gap:8px;max-height:380px;overflow:auto;margin:12px 0}.backup-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #29483d;border-radius:10px;background:#071b15}.backup-item label{display:flex;align-items:center;gap:9px;width:100%;cursor:pointer}.backup-item small{display:block;color:#81978e;margin-top:2px}.backup-empty{padding:18px;text-align:center;color:#81978e;border:1px dashed #29483d;border-radius:10px}@media(max-width:700px){.admin-actions{justify-content:flex-start}.admin-card .settings-row{flex-direction:column}.admin-db-details{gap:8px 14px}}\n'''
+          style_end = c.rfind("</style>")
+          c = c[:style_end] + css + c[style_end:]
+
+          js = r'''\n(function initGrassAdmin(){if(!window.grassAdmin)return;const statusEl=$('updateStatus'),installBtn=$('installUpdateBtn'),checkBtn=$('checkUpdateBtn'),dbSize=$('dbSize'),dbSchema=$('dbSchema'),dbBackupCount=$('dbBackupCount'),dbLastBackup=$('dbLastBackup'),dbInfoText=$('dbInfoText'),restoreDlg=$('restoreBackupDlg'),backupList=$('backupList');const fmtBytes=n=>{n=Number(n||0);if(n<1024)return n+' Б';if(n<1048576)return (n/1024).toFixed(0)+' КБ';if(n<1073741824)return (n/1048576).toFixed(1)+' МБ';return (n/1073741824).toFixed(2)+' ГБ'};const fmtDate=v=>{if(!v)return'нет';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})};function refreshDbInfo(){try{const i=window.grassAdmin.getDatabaseInfo();dbSize.textContent=fmtBytes(i.databaseSize);dbSchema.textContent='v'+i.schemaVersion;dbBackupCount.textContent=i.backupCount??(i.backups||[]).length;dbLastBackup.textContent=fmtDate(i.lastBackupAt);dbInfoText.textContent='SQLite • '+(i.backupCount??(i.backups||[]).length)+' резервных копий'}catch(e){dbInfoText.textContent='Не удалось получить информацию о базе'}}function setUpdateStatus(s){const map={checking:'Проверяем обновления…',available:'Доступна новая версия '+(s.version||''),upToDate:'Установлена актуальная версия',downloading:'Скачивание обновления: '+(s.percent||0)+'%',downloaded:'Обновление '+(s.version||'')+' готово к установке',error:'Ошибка обновления: '+(s.message||'неизвестная ошибка')};statusEl.textContent=map[s.status]||'Готово';if(s.status==='downloaded')installBtn.style.display='inline-flex';if(s.status==='available'||s.status==='downloading')installBtn.style.display='none'}checkBtn?.addEventListener('click',async()=>{setUpdateStatus({status:'checking'});try{await window.grassAdmin.checkForUpdates()}catch(e){setUpdateStatus({status:'error',message:e.message})}});installBtn?.addEventListener('click',()=>window.grassAdmin.installUpdate());window.grassAdmin.onUpdateStatus(setUpdateStatus);$('createBackupBtn')?.addEventListener('click',async()=>{const b=$('createBackupBtn');b.disabled=true;b.textContent='Создание…';try{await window.grassAdmin.createBackup();refreshDbInfo();b.textContent='✓ Резервная копия создана';setTimeout(()=>b.textContent='Создать резервную копию',1800)}catch(e){alert('Не удалось создать резервную копию: '+e.message);b.textContent='Создать резервную копию'}finally{b.disabled=false}});$('openBackupFolderBtn')?.addEventListener('click',()=>window.grassAdmin.openBackupFolder());async function renderBackups(){backupList.innerHTML='<div class="backup-empty">Загрузка списка…</div>';try{const items=await window.grassAdmin.listBackups();if(!items.length){backupList.innerHTML='<div class="backup-empty">Резервных копий пока нет</div>';return}backupList.innerHTML=items.map((x,i)=>'<div class="backup-item"><label><input type="radio" name="grassBackup" value="'+esc(x.name)+'" '+(i===0?'checked':'')+'><span><b>'+esc(x.name)+'</b><small>'+fmtDate(x.createdAt)+' · '+fmtBytes(x.size)+'</small></span></label></div>').join('')}catch(e){backupList.innerHTML='<div class="backup-empty">Не удалось загрузить список резервных копий</div>'}}$('restoreBackupBtn')?.addEventListener('click',async()=>{await renderBackups();restoreDlg?.showModal()});$('restoreBackupClose')?.addEventListener('click',()=>restoreDlg?.close());$('restoreBackupCancel')?.addEventListener('click',()=>restoreDlg?.close());$('restoreBackupConfirm')?.addEventListener('click',async()=>{const selected=document.querySelector('input[name="grassBackup"]:checked');if(!selected)return alert('Выбери резервную копию.');if(!confirm('Восстановить выбранную резервную копию? Текущая база перед этим будет сохранена.'))return;try{await window.grassAdmin.restoreBackup(selected.value);location.reload()}catch(e){alert('Не удалось восстановить данные: '+e.message)}});refreshDbInfo();setTimeout(()=>window.grassAdmin.checkForUpdates().catch(()=>{}),800)})();\n'''
+          script_end = c.rfind("</script>")
+          c = c[:script_end] + js + c[script_end:]
+
+          p.write_text(c, encoding="utf-8")
+          print("Patched index.html:", p.stat().st_size)
+
+      - name: Commit patched UI
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "Add Stage 4 update and backup controls to app UI"
+          git push origin HEAD:v1.4.1
