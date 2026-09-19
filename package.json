@@ -1,0 +1,56 @@
+{
+  "name": "grass-shift-handover",
+  "version": "1.3.0",
+  "description": "GRASS — Передача смены — Final Windows desktop build",
+  "main": "main.js",
+  "author": "GRASS",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.1.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ru.grass.shift-handover",
+    "productName": "GRASS — Передача смены",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "package.json",
+      "GRASS_icon.ico"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "GRASS-Peredacha-smeny-Setup-${version}.${ext}",
+      "icon": "GRASS_icon.ico",
+      "executableName": "GRASS-Peredacha-smeny"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "GRASS — Передача смены",
+      "runAfterFinish": true,
+      "uninstallDisplayName": "GRASS — Передача смены",
+      "deleteAppDataOnUninstall": false
+    },
+    "icon": "GRASS_icon.ico",
+    "publish": null
+  }
+}
