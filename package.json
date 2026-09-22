@@ -1,6 +1,6 @@
 {
   "name": "grass-shift-handover",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "description": "GRASS — Передача смены — площадки Ахтуба и Волжский, общий список технологов",
   "main": "main.js",
   "author": "GRASS",
