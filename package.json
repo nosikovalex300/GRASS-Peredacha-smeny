@@ -1,66 +1,64 @@
-﻿{
-    "name":  "grass-shift-handover",
-    "version":  "1.5.3",
-    "description":  "GRASS вЂ” РџРµСЂРµРґР°С‡Р° СЃРјРµРЅС‹ вЂ” РїР»РѕС‰Р°РґРєРё РђС…С‚СѓР±Р° Рё Р’РѕР»Р¶СЃРєРёР№, РѕР±С‰РёР№ СЃРїРёСЃРѕРє С‚РµС…РЅРѕР»РѕРіРѕРІ",
-    "main":  "main.js",
-    "author":  "GRASS",
-    "license":  "UNLICENSED",
-    "scripts":  {
-                    "start":  "electron .",
-                    "dist:win":  "electron-builder --win nsis --x64 --publish never"
-                },
-    "devDependencies":  {
-                            "electron":  "^38.1.0",
-                            "electron-builder":  "^26.0.12"
-                        },
-    "build":  {
-                  "appId":  "ru.grass.shift-handover",
-                  "productName":  "GRASS вЂ” РџРµСЂРµРґР°С‡Р° СЃРјРµРЅС‹",
-                  "directories":  {
-                                      "output":  "dist"
-                                  },
-                  "files":  [
-                                "index.html",
-                                "main.js",
-                                "preload.js",
-                                "package.json",
-                                "GRASS_icon.ico"
-                            ],
-                  "win":  {
-                              "target":  [
-                                             {
-                                                 "target":  "nsis",
-                                                 "arch":  [
-                                                              "x64"
-                                                          ]
-                                             }
-                                         ],
-                              "artifactName":  "GRASS-Peredacha-smeny-Setup-${version}.${ext}",
-                              "icon":  "GRASS_icon.ico",
-                              "executableName":  "GRASS-Peredacha-smeny"
-                          },
-                  "nsis":  {
-                               "oneClick":  false,
-                               "perMachine":  false,
-                               "allowToChangeInstallationDirectory":  true,
-                               "createDesktopShortcut":  true,
-                               "createStartMenuShortcut":  true,
-                               "shortcutName":  "GRASS вЂ” РџРµСЂРµРґР°С‡Р° СЃРјРµРЅС‹",
-                               "runAfterFinish":  true,
-                               "uninstallDisplayName":  "GRASS вЂ” РџРµСЂРµРґР°С‡Р° СЃРјРµРЅС‹",
-                               "deleteAppDataOnUninstall":  false
-                           },
-                  "icon":  "GRASS_icon.ico",
-                  "publish":  [
-                                  {
-                                      "provider":  "github",
-                                      "owner":  "nosikovalex300",
-                                      "repo":  "GRASS-Peredacha-smeny",
-                                      "releaseType":  "release"
-                                  }
-                              ]
-              },
-    "dependencies":  {
-                         "electron-updater":  "^6.6.2"
-                     }
+{
+  "name": "grass-shift-handover",
+  "version": "1.5.4",
+  "description": "GRASS — Передача смены — площадки Ахтуба и Волжский, общий список технологов",
+  "main": "main.js",
+  "author": "GRASS",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^38.1.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ru.grass.shift-handover",
+    "productName": "GRASS — Передача смены",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "package.json",
+      "GRASS_icon.ico"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "GRASS-Peredacha-smeny-Setup-${version}.${ext}",
+      "icon": "GRASS_icon.ico",
+      "executableName": "GRASS-Peredacha-smeny"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "GRASS — Передача смены",
+      "runAfterFinish": true,
+      "uninstallDisplayName": "GRASS — Передача смены",
+      "deleteAppDataOnUninstall": false
+    },
+    "icon": "GRASS_icon.ico",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nosikovalex300",
+        "repo": "GRASS-Peredacha-smeny",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  }
 }
