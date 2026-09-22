@@ -6,8 +6,6 @@ on:
     branches:
       - main
       - master
-    tags:
-      - 'v*.*.*'
   pull_request:
     branches:
       - main
@@ -35,18 +33,6 @@ jobs:
           node-version: '24.x'
           package-manager-cache: false
 
-      - name: Set version from release tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          $tag = '${{ github.ref_name }}'
-          if ($tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
-            throw "Invalid release tag: $tag. Expected vMAJOR.MINOR.PATCH"
-          }
-          $version = $tag.Substring(1)
-          npm version $version --no-git-tag-version --allow-same-version
-          Write-Host "Release version: $version"
-
       - name: Show versions
         shell: pwsh
         run: |
@@ -54,10 +40,6 @@ jobs:
           npm --version
           $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
           Write-Host "GRASS version: $($pkg.version)"
-          if ('${{ github.ref_type }}' -eq 'tag') {
-            $expected = '${{ github.ref_name }}'.Substring(1)
-            if ($pkg.version -ne $expected) { throw "package.json version $($pkg.version) does not match tag $expected" }
-          }
 
       - name: Install dependencies
         run: npm install
@@ -93,7 +75,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GRASS-Windows-Installer-${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}
+          name: GRASS-Windows-Installer-${{ github.run_number }}
           path: |
             dist/*.exe
             dist/*.blockmap
@@ -102,11 +84,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Read package version
+        id: package
+        shell: pwsh
+        run: |
+          $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          "version=$($pkg.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
-          name: GRASS — Передача смены ${{ github.ref_name }}
+          tag_name: v${{ steps.package.outputs.version }}
+          name: GRASS — Передача смены v${{ steps.package.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/*.exe
             dist/*.blockmap
