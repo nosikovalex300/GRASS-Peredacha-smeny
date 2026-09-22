@@ -1,0 +1,107 @@
+name: Build and Release GRASS for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: grass-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          package-manager-cache: false
+
+      - name: Show package version
+        shell: pwsh
+        run: |
+          $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          Write-Host "GRASS version: $($pkg.version)"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate project files
+        shell: pwsh
+        run: |
+          node --check main.js
+          node --check preload.js
+          if (-not (Test-Path 'index.html')) { throw 'index.html not found' }
+          if (-not (Test-Path 'GRASS_icon.ico')) { throw 'GRASS_icon.ico not found' }
+          if (-not (Test-Path 'shift-summary-icon.png')) { throw 'shift-summary-icon.png not found' }
+          if (-not (Test-Path 'package.json')) { throw 'package.json not found' }
+
+      - name: Build NSIS installer
+        run: npm run dist:win
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path 'dist' -Filter '*.exe' | Select-Object -First 1
+          if ($null -eq $installer) { throw 'Installer .exe was not created' }
+          Write-Host "Installer: $($installer.FullName)"
+          Write-Host "Size: $([math]::Round($installer.Length / 1MB, 2)) MB"
+
+      - name: Calculate SHA256
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path 'dist' -Filter '*.exe' | Select-Object -First 1
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash
+          "$hash  $($installer.Name)" | Out-File -Encoding ascii 'dist/SHA256SUMS.txt'
+          Write-Host "SHA256: $hash"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GRASS-Windows-Installer-${{ github.run_number }}
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Read package version
+        id: package
+        shell: pwsh
+        run: |
+          $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+          "version=$($pkg.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.package.outputs.version }}
+          name: GRASS — Передача смены v${{ steps.package.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          make_latest: true
