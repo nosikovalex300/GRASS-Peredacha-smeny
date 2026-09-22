@@ -24,7 +24,8 @@
       "main.js",
       "preload.js",
       "package.json",
-      "GRASS_icon.ico"
+      "GRASS_icon.ico",
+      "shift-summary-icon.png"
     ],
     "win": {
       "target": [
