@@ -27,6 +27,28 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v7
 
+      - name: Prepare release source
+        id: prepare
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        shell: pwsh
+        run: |
+          $index = Get-Content 'index.html' -Raw
+          $old = '<button type="button" id="shiftSummaryBtn" class="shift-summary-btn" title="Краткая сводка предыдущей смены"><span>▣</span><span>Сводка смены</span></button>'
+          $new = '<button type="button" id="shiftSummaryBtn" class="shift-summary-btn" title="Краткая сводка предыдущей смены"><img src="shift-summary-icon.png" alt=""><span>Сводка смены</span></button>'
+          if ($index.Contains($old)) { $index = $index.Replace($old, $new); Set-Content 'index.html' -Value $index -Encoding utf8 }
+          $pkg = Get-Content 'package.json' -Raw
+          $pkg = [regex]::Replace($pkg, '"version"\\s*:\\s*"[^"]+"', '"version": "1.5.5"', 1)
+          Set-Content 'package.json' -Value $pkg -Encoding utf8
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html package.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m 'Release v1.5.5 with shift summary icon'
+            git push origin HEAD:main
+          }
+          "commit_sha=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -97,7 +119,7 @@ jobs:
         with:
           tag_name: v${{ steps.package.outputs.version }}
           name: GRASS — Передача смены v${{ steps.package.outputs.version }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.prepare.outputs.commit_sha }}
           files: |
             dist/*.exe
             dist/*.blockmap
