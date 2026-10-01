@@ -576,10 +576,56 @@ function dbGet(key) {
   return getSetting(key);
 }
 
+function handoverNextShift(sourceShift, at = new Date()) {
+  const SHIFT_CYCLE = ['День','День','Выходной','Ночь','Ночь','Выходной','Выходной','Выходной'];
+  const SHIFT_PHASE = { A:7, B:3, C:1, D:5 };
+  const shiftStateOnDate = (date, shift) => {
+    const base = new Date(2026, 8, 1);
+    base.setHours(0,0,0,0);
+    const d = new Date(date);
+    d.setHours(0,0,0,0);
+    const diff = Math.floor((d - base) / 86400000);
+    return SHIFT_CYCLE[((diff + SHIFT_PHASE[shift]) % 8 + 8) % 8];
+  };
+  const activeShiftAt = (date) => {
+    const d = new Date(date);
+    const h = d.getHours(), m = d.getMinutes();
+    if (h < 8 || (h === 8 && m < 30)) d.setDate(d.getDate() - 1);
+    const mode = (h >= 8 && (h < 20 || (h === 20 && m < 30))) ? 'День' : 'Ночь';
+    return ['A','B','C','D'].find(x => shiftStateOnDate(d, x) === mode) || null;
+  };
+  const current = activeShiftAt(at);
+  if (current && current !== sourceShift) return current;
+  for (let i = 0; i < 16; i++) {
+    const day = new Date(at);
+    day.setHours(0,0,0,0);
+    day.setDate(day.getDate() + i);
+    for (const mode of ['День','Ночь']) {
+      const start = new Date(day);
+      start.setHours(mode === 'День' ? 8 : 20, mode === 'День' ? 30 : 30, 0, 0);
+      if (start <= at) continue;
+      const candidate = ['A','B','C','D'].find(x => x !== sourceShift && shiftStateOnDate(day, x) === mode);
+      if (candidate) return candidate;
+    }
+  }
+  return ({A:'B',B:'C',C:'D',D:'A'})[sourceShift] || null;
+}
+
 function dbSet(key, value) {
   if (key === STORAGE_KEY) {
     let parsed;
     try { parsed = JSON.parse(value); } catch (_) { throw new Error('Некорректные данные приложения'); }
+    // При повторной передаче используем фактического текущего владельца задачи
+    // (acceptedShift), а не исходную смену автора.
+    if (Array.isArray(parsed?.tasks)) {
+      const at = new Date();
+      for (const task of parsed.tasks) {
+        if (task?.status === 'Передать по смене' && task.acceptedShift) {
+          const next = handoverNextShift(task.acceptedShift, at);
+          if (next) task.toShift = next;
+        }
+      }
+    }
     replaceNormalizedData(parsed, activeSite);
     return;
   }
