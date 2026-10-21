@@ -18,7 +18,8 @@ concurrency:
 jobs:
   build-android:
     name: Build APK
-    runs-on: ubuntu-latest
+    # Фиксированный образ: в нём уже есть Android SDK (ubuntu-latest переезжает на Ubuntu 26).
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     defaults:
       run:
@@ -26,21 +27,25 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/build-tools" || { echo "::error::Android SDK не найден в образе runner"; exit 1; }
+          ls "$ANDROID_HOME/build-tools" | tail -3
+          ls "$ANDROID_HOME/platforms" | tail -3
 
       - name: Version
         id: ver
@@ -51,20 +56,20 @@ jobs:
           echo "GRASS Android ${V}-android, build ${GITHUB_RUN_NUMBER}"
 
       - name: Set up Python (for icons)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Generate Android icons from GRASS_icon.png
         run: |
-          python -m pip install --quiet pillow
-          python scripts/make-icons.py
+          python -m pip install --quiet pillow 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+          python scripts/make-icons.py 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
 
       - name: Check build scripts
-        run: npm run check
+        run: npm run check 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
 
       - name: Prepare web app (www) from shared index.html
         env:
@@ -73,9 +78,10 @@ jobs:
 
       - name: Create Android project
         run: |
+          set -o pipefail
           rm -rf android
-          npx cap add android
-          npx cap sync android
+          npx cap add android 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+          npx cap sync android 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
           npx cap --version
 
       - name: Signing key
@@ -105,17 +111,16 @@ jobs:
         env:
           GRASS_VERSION_NAME: ${{ steps.ver.outputs.name }}
           GRASS_VERSION_CODE: ${{ steps.ver.outputs.code }}
-        run: node scripts/patch-android.js
+        run: node scripts/patch-android.js 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
 
       - name: Build APK
         working-directory: mobile/android
         run: |
+          set -o pipefail
           chmod +x gradlew
-          if [ "${{ steps.sign.outputs.has_key }}" = "true" ]; then
-            ./gradlew --no-daemon --stacktrace assembleRelease
-          else
-            ./gradlew --no-daemon --stacktrace assembleDebug
-          fi
+          TASK=assembleDebug
+          if [ "${{ steps.sign.outputs.has_key }}" = "true" ]; then TASK=assembleRelease; fi
+          ./gradlew --no-daemon --console=plain "$TASK" 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
 
       - name: Verify and name APK
         run: |
@@ -144,3 +149,16 @@ jobs:
           path: mobile/out/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Show error in annotations
+        if: failure()
+        working-directory: .
+        run: |
+          LOG="$RUNNER_TEMP/grass-build.log"
+          [ -f "$LOG" ] || { echo "::error::Сборка упала до начала логирования (см. шаг выше)"; exit 0; }
+          # Самое важное из Gradle — блок «What went wrong», иначе — хвост лога.
+          PART=$(grep -n -A 25 "What went wrong" "$LOG" | head -60)
+          [ -n "$PART" ] || PART=$(grep -i -E "error|failed|exception" "$LOG" | tail -40)
+          [ -n "$PART" ] || PART=$(tail -40 "$LOG")
+          MSG=$(printf '%s' "$PART" | cut -c1-300 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::error title=GRASS build log::${MSG}"
