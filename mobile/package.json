@@ -1,0 +1,21 @@
+{
+  "name": "grass-shift-handover-mobile",
+  "version": "1.6.1",
+  "private": true,
+  "description": "GRASS — Передача смены: Android-версия (Capacitor) на общем index.html",
+  "license": "UNLICENSED",
+  "scripts": {
+    "prepare-www": "node scripts/prepare-www.js",
+    "check": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/share": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

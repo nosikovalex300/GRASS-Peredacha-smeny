@@ -1,0 +1,19 @@
+{
+  "appId": "ru.grass.shifthandover",
+  "appName": "Передача смены",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK"
+    }
+  }
+}

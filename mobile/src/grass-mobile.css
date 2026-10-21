@@ -1,0 +1,108 @@
+/* GRASS — Передача смены · стили под телефон.
+   Подключаются ПОСЛЕДНИМИ и только в Android-версии; десктопный index.html не меняется. */
+
+/* ---------- служебные блоки моста ---------- */
+#grass-mobile-banner{position:fixed;left:12px;right:12px;bottom:calc(76px + var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)));z-index:9999;padding:12px 14px;border-radius:12px;font-size:13px;line-height:1.35;box-shadow:0 8px 24px #0008}
+#grass-mobile-banner.error{background:#5a1e20;border:1px solid #c2484c;color:#ffe1e1}
+#grass-mobile-banner.info{background:#0b3a26;border:1px solid #1fae6a;color:#e3fff0}
+#grass-mobile-banner[hidden]{display:none}
+#grass-mobile-fatal{position:fixed;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;padding:24px;text-align:center;background:#02150f;color:#eaf5ef;font:15px/1.4 system-ui,sans-serif}
+#grass-mobile-fatal button{padding:12px 20px;border-radius:10px;border:1px solid #00c96a;background:#0a2a1e;color:#dff6e9;font:inherit}
+
+/* ---------- общее для телефона и планшета ---------- */
+html{-webkit-tap-highlight-color:transparent;background:#02150f}
+body{background-attachment:scroll!important;min-height:100vh;min-height:100dvh;box-sizing:border-box;padding-bottom:calc(76px + var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))!important}
+header{padding-top:calc(12px + var(--safe-area-inset-top,env(safe-area-inset-top,0px)))!important}
+nav{padding-bottom:calc(6px + var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))!important;background:linear-gradient(180deg,rgba(2,19,14,.0),#02130e 22%)!important}
+.site-gate{padding-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));padding-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))}
+dialog{max-height:calc(100dvh - 24px - var(--safe-area-inset-top,env(safe-area-inset-top,0px)) - var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)));overflow:auto;overscroll-behavior:contain}
+input[type="datetime-local"]{width:100%;min-height:46px;background:#071f18;border:1px solid #355348;color:#eaf3ef;border-radius:12px;padding:10px 12px;font:inherit;color-scheme:dark}
+/* hover-эффекты на сенсорном экране «залипают» — отключаем подъём карточек */
+@media (hover:none){.dash-card:hover,nav button:hover{transform:none!important}}
+
+/* ---------- телефон ---------- */
+@media (max-width:700px){
+  /* Шапка */
+  header{padding-left:14px!important;padding-right:14px!important;padding-bottom:4px!important}
+  .slogan{display:none!important}
+  .brand b{font-size:20px}
+  .screen{padding:4px 12px!important}
+  .screen h1{font-size:24px!important}
+
+  /* Заголовок экрана задач */
+  .title{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px}
+  .title>div{min-width:0}
+  .title h1{font-size:24px!important;margin:4px 0 2px!important;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+  .site-badge{font-size:11px!important;padding:3px 9px!important}
+  .title p{font-size:12px!important;margin:0 0 4px!important}
+  .change-site-btn{padding:7px 11px!important;font-size:12px!important}
+
+  /* Технолог / смена */
+  .tech-coat-icon{display:none!important}
+  .person-shift{height:auto!important;min-height:0!important;padding:4px!important}
+  .person-shift .selector{min-height:52px!important;padding:6px 10px!important}
+  .person-shift .selector span{flex-direction:column!important;align-items:flex-start!important;gap:2px!important;white-space:normal!important}
+  .person-shift .selector b{font-size:15px!important}
+  .person-shift .shift-selector{width:118px!important;flex:0 0 118px!important}
+  .person-shift .tech-selector{flex:1 1 auto!important}
+
+  /* Текущая смена / передача */
+  .shift-info{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px!important;align-items:center;padding:10px 12px!important;margin-bottom:0!important}
+  .shift-info-divider{display:none!important}
+  .shift-info-block b{white-space:normal!important;font-size:13px!important;line-height:1.25}
+  .shift-info-block span{font-size:11px}
+  .shift-summary-btn{min-height:46px;padding:0 10px!important}
+  .shift-summary-btn img{width:30px;height:30px}
+
+  /* Дата и время — компактно, без декоративных иконок */
+  .modern-clock{min-height:0!important;padding:8px 12px!important;gap:12px!important;justify-content:space-between}
+  .clock-date-icon-new,.clock-time-icon,.clock-divider,.clock-brand-mark{display:none!important}
+  .clock-date-block b{font-size:15px!important}
+  .clock-time-block strong{font-size:22px!important}
+  .clock-weekday{width:auto!important;flex:0 0 auto}
+
+  /* Счётчики: 4 в ряд, компактно */
+  .dashboard-area .mini-dashboard,.mini-dashboard{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:6px!important;margin:12px 0 0!important}
+  .dash-card{min-height:54px!important;padding:7px 4px!important;align-items:center;text-align:center;gap:3px!important;border-radius:11px!important}
+  .dash-card strong{font-size:19px!important}
+  .dash-card span{font-size:10px!important;line-height:1.15!important}
+
+  /* Поиск и фильтры */
+  .dashboard-area .tools.smart-tools{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  .dashboard-area .tools.smart-tools input{grid-column:1 / -1}
+  .tools input,.tools select{padding:10px 11px!important;font-size:14px!important;border-radius:10px!important}
+  .dashboard-area .mini-add{min-height:48px!important;font-size:16px!important}
+
+  /* Карточки задач */
+  .task h3{font-size:16px!important;overflow-wrap:anywhere}
+  .task p{font-size:12px!important;overflow-wrap:anywhere}
+
+  /* Нижнее меню */
+  nav{gap:4px!important;padding-left:6px!important;padding-right:6px!important;padding-top:6px!important}
+  nav button{min-height:56px!important;padding:4px 2px!important;border-radius:12px!important}
+  nav button .nav-icon{width:28px!important;height:28px!important}
+  nav button span{font-size:10px!important;margin-top:1px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+  /* Окна */
+  dialog{width:calc(100% - 16px)!important;padding:16px!important;border-radius:16px!important}
+  dialog h2{font-size:21px}
+  .stage4-dialog{padding:0!important}
+
+  /* Настройки */
+  .settings-row{flex-wrap:wrap;gap:10px!important;padding:14px!important}
+  .settings-section-head{padding:14px!important}
+  .tech-add-row{padding:12px 14px!important;gap:8px!important}
+  .tech-add-row input{flex:1 1 0!important;width:auto!important;min-width:0!important}
+  .tech-add-row .add{flex:0 0 auto!important;width:auto!important;margin:0!important}
+  .settings-row-toggle{flex-wrap:nowrap!important}
+  .settings-row-toggle>div{flex:1 1 auto}
+  .stage4-data-head{height:auto!important;min-height:0!important}
+  .stage4-actions,.stage4-data-head .stage4-actions{width:100%!important;max-width:none!important;flex:1 1 100%!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .stage4-data-head .stage4-actions .stage4-primary{grid-column:1 / -1}
+  .compact-db-info{grid-template-columns:repeat(2,minmax(0,1fr))!important;padding:10px 14px!important}
+  .compact-db-info .db-info-path{grid-column:1 / -1!important}
+  .stage4-card .settings-row>div:first-child{flex:1 1 100%}
+  #checkUpdateBtn,#installUpdateBtn{display:none!important}
+  .archive-clear-row{align-items:flex-start}
+  .archive-clear-side{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px}
+}
