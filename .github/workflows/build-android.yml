@@ -1,0 +1,173 @@
+name: Build GRASS for Android (APK)
+
+# Сборка Android-версии. Запускается только из Android-веток или вручную —
+# main, Windows-сборку и релизы не трогает.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android
+      - claude/project-thread-z6urtn   # Android 1.7.11 (на основе main 1.7.11), пока не влита в android
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/build-android.yml'
+      - 'index.html'
+      - '*.js'
+      - 'styles.css'
+      - 'img/**'
+      - 'fonts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grass-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build APK
+    # Фиксированный образ: в нём уже есть Android SDK (ubuntu-latest переезжает на Ubuntu 26).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/build-tools" || { echo "::error::Android SDK не найден в образе runner"; exit 1; }
+          ls "$ANDROID_HOME/build-tools" | tail -3
+          ls "$ANDROID_HOME/platforms" | tail -3
+
+      - name: Version
+        id: ver
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "name=${V}-android" >> "$GITHUB_OUTPUT"
+          echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "GRASS Android ${V}-android, build ${GITHUB_RUN_NUMBER}"
+
+      - name: Set up Python (for icons)
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Generate Android icons from GRASS_icon.png
+        run: |
+          python -m pip install --quiet pillow 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+          python scripts/make-icons.py 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
+
+      - name: Check build scripts
+        run: npm run check 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
+
+      - name: Prepare web app (www) from shared index.html
+        env:
+          GRASS_MOBILE_VERSION: ${{ steps.ver.outputs.name }}
+        run: node scripts/prepare-www.js
+
+      - name: Create Android project
+        run: |
+          set -o pipefail
+          rm -rf android
+          npx cap add android 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+          npx cap sync android 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+          npx cap --version
+
+      - name: Signing key
+        id: sign
+        env:
+          SIGNING: ${{ secrets.GRASS_ANDROID_SIGNING }}
+        run: |
+          if [ -z "$SIGNING" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Секрет GRASS_ANDROID_SIGNING не задан. Собирается ТЕСТОВЫЙ APK: следующую версию нельзя будет поставить поверх него без удаления приложения (и данных)."
+            exit 0
+          fi
+          node -e '
+            const fs = require("fs");
+            const s = JSON.parse(process.env.SIGNING);
+            for (const k of ["keystore_base64","store_password","key_alias","key_password"]) if (!s[k]) { console.error("В секрете нет поля " + k); process.exit(1); }
+            const p = process.env.RUNNER_TEMP + "/grass-release.jks";
+            fs.writeFileSync(p, Buffer.from(s.keystore_base64, "base64"));
+            console.log("::add-mask::" + s.store_password);
+            console.log("::add-mask::" + s.key_password);
+            fs.appendFileSync(process.env.GITHUB_ENV,
+              `GRASS_KEYSTORE_PATH=${p}\nGRASS_KEYSTORE_PASSWORD=${s.store_password}\nGRASS_KEY_ALIAS=${s.key_alias}\nGRASS_KEY_PASSWORD=${s.key_password}\n`);
+          '
+          echo "has_key=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Android project (icons, version, permissions, signing)
+        env:
+          GRASS_VERSION_NAME: ${{ steps.ver.outputs.name }}
+          GRASS_VERSION_CODE: ${{ steps.ver.outputs.code }}
+        run: node scripts/patch-android.js 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"; exit ${PIPESTATUS[0]}
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          TASK=assembleDebug
+          if [ "${{ steps.sign.outputs.has_key }}" = "true" ]; then TASK=assembleRelease; fi
+          ./gradlew --no-daemon --console=plain "$TASK" 2>&1 | tee -a "$RUNNER_TEMP/grass-build.log"
+
+      - name: Verify and name APK
+        run: |
+          set -e
+          if [ "${{ steps.sign.outputs.has_key }}" = "true" ]; then
+            SRC=android/app/build/outputs/apk/release/app-release.apk
+            NAME="GRASS-Peredacha-smeny-${{ steps.ver.outputs.name }}-build${{ steps.ver.outputs.code }}.apk"
+          else
+            SRC=android/app/build/outputs/apk/debug/app-debug.apk
+            NAME="GRASS-Peredacha-smeny-${{ steps.ver.outputs.name }}-build${{ steps.ver.outputs.code }}-TEST.apk"
+          fi
+          test -f "$SRC" || { echo "APK не найден: $SRC"; ls -R android/app/build/outputs || true; exit 1; }
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$APKSIGNER" verify --print-certs "$SRC" | tee signer.txt
+          mkdir -p out
+          cp "$SRC" "out/$NAME"
+          (cd out && sha256sum "$NAME" > SHA256SUMS.txt)
+          grep -i "SHA-256 digest" signer.txt | head -1 | sed 's/^/Signing certificate /' >> out/SHA256SUMS.txt
+          ls -la out
+          echo "### APK готов: $NAME ($(du -h "out/$NAME" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GRASS-Android-APK-${{ steps.ver.outputs.code }}
+          path: mobile/out/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Show error in annotations
+        if: failure()
+        working-directory: .
+        run: |
+          LOG="$RUNNER_TEMP/grass-build.log"
+          [ -f "$LOG" ] || { echo "::error::Сборка упала до начала логирования (см. шаг выше)"; exit 0; }
+          # Самое важное из Gradle — блок «What went wrong», иначе — хвост лога.
+          PART=$(grep -n -A 25 "What went wrong" "$LOG" | head -60)
+          [ -n "$PART" ] || PART=$(grep -i -E "error|failed|exception" "$LOG" | tail -40)
+          [ -n "$PART" ] || PART=$(tail -40 "$LOG")
+          MSG=$(printf '%s' "$PART" | cut -c1-300 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::error title=GRASS build log::${MSG}"

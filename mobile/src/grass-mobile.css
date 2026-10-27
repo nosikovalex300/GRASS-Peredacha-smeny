@@ -1,0 +1,129 @@
+/* GRASS — Передача смены · стили под телефон (дизайн 1.7.5+ «вариант H»).
+   Подключаются ПОСЛЕДНИМИ и только в Android-версии; десктопные index.html и styles.css не меняются.
+   На телефоне: боковое меню → шапка (технолог, смена, площадка) + нижняя панель разделов + круглая кнопка «+». */
+
+:root{--m-safe-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));--m-safe-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px));--m-nav-h:62px}
+
+/* ---------- служебные блоки моста ---------- */
+#grass-mobile-banner{position:fixed;left:12px;right:12px;bottom:calc(var(--m-nav-h) + 14px + var(--m-safe-bottom));z-index:9999;padding:12px 14px;border-radius:12px;font-size:13px;line-height:1.35;box-shadow:0 8px 24px #0008}
+#grass-mobile-banner.error{background:#5a1e20;border:1px solid #c2484c;color:#ffe1e1}
+#grass-mobile-banner.info{background:#0b3a26;border:1px solid #1fae6a;color:#e3fff0}
+#grass-mobile-banner[hidden]{display:none}
+#grass-mobile-fatal{position:fixed;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;justify-content:center;padding:24px;text-align:center;background:#02150f;color:#eaf5ef;font:15px/1.4 system-ui,sans-serif}
+#grass-mobile-fatal button{padding:12px 20px;border-radius:10px;border:1px solid #00c96a;background:#0a2a1e;color:#dff6e9;font:inherit}
+
+/* ---------- общее для телефона и планшета ---------- */
+html{-webkit-tap-highlight-color:transparent;background:#02150f}
+body{background-attachment:scroll!important}
+.site-gate{padding-top:var(--m-safe-top);padding-bottom:var(--m-safe-bottom)}
+dialog{max-height:calc(100dvh - 24px - var(--m-safe-top) - var(--m-safe-bottom));overflow:auto;overscroll-behavior:contain}
+input[type="datetime-local"]{min-height:44px;color-scheme:dark}
+/* hover на сенсорном экране «залипает» */
+@media (hover:none){.dash-card:hover,nav button:hover,.task:hover{transform:none!important}}
+
+/* ---------- телефон ---------- */
+@media (max-width:760px){
+  html,body{max-width:100%;overflow-x:hidden}
+  body{min-height:100dvh;padding-bottom:calc(var(--m-nav-h) + 8px + var(--m-safe-bottom))!important}
+
+  /* Каркас: меню больше не слева */
+  .app-shell{display:block!important;min-height:0!important}
+  .app-main{display:block!important}
+  .sidebar{position:relative!important;top:auto!important;height:auto!important;width:auto!important;padding:calc(10px + var(--m-safe-top)) 12px 8px!important;gap:8px!important;border-right:0!important;border-bottom:1px solid rgba(0,220,107,.14);backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transform:none!important;filter:none!important;z-index:40!important;flex-direction:column!important}
+  .sidebar .brand{gap:8px!important}
+  .sidebar .brand-logo{width:30px!important;height:30px!important}
+  .sidebar .brand b{font-size:17px!important}
+  .sidebar .brand small{display:none!important}
+  .side-spacer{display:none!important}
+
+  /* Технолог / смена / площадка — одной компактной полосой */
+  .side-person{display:grid!important;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:6px 8px!important;padding:8px!important}
+  .side-person .side-label{margin-bottom:2px!important;font-size:9px!important}
+  .side-person .selector{min-height:40px!important;height:auto!important;padding:6px 10px!important}
+  .side-person .selector b{font-size:14px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .side-person .tech-coat-icon{display:none!important}
+  .side-site{grid-column:1 / -1}
+  .side-site .change-site-btn{padding:6px 10px!important;font-size:12px!important}
+  .side-person .menu{max-height:55vh;overflow:auto;z-index:60}
+
+  /* Нижняя панель разделов */
+  .sidebar nav{position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;width:auto!important;transform:none!important;z-index:50!important;
+    display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:2px!important;padding:4px 4px calc(4px + var(--m-safe-bottom))!important;
+    background:#02130e!important;border-top:1px solid rgba(0,220,107,.22)!important;border-radius:0!important;box-shadow:0 -6px 18px rgba(0,0,0,.45)!important}
+  .sidebar nav button{height:var(--m-nav-h)!important;min-height:0!important;width:auto!important;flex-direction:column!important;justify-content:center!important;align-items:center!important;gap:2px!important;padding:2px 0!important;border-radius:10px!important;position:relative}
+  .sidebar nav button .nav-icon{width:28px!important;height:28px!important}
+  .sidebar nav button span{font-size:10px!important;line-height:1.1;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sidebar nav .nav-badge{position:absolute!important;top:2px;right:6px;margin:0!important;transform:scale(.85)}
+
+  /* «Добавить задачу» — круглая кнопка над панелью */
+  .sidebar .side-add{position:fixed!important;right:14px;bottom:calc(var(--m-nav-h) + 18px + var(--m-safe-bottom));width:58px!important;height:58px!important;border-radius:50%!important;z-index:55;font-size:0!important;padding:0!important;box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 18px rgba(0,220,107,.4)!important}
+  .sidebar .side-add::before{content:"+";font-size:34px;line-height:1;font-weight:500}
+
+  /* Экраны */
+  .screen{padding:8px 10px 16px!important;max-width:none!important}
+  .screen h1{font-size:23px!important;line-height:1.15!important;margin:2px 0!important}
+  .page-head{display:flex!important;flex-wrap:wrap;align-items:center;gap:6px 10px!important;margin-bottom:8px!important}
+  .page-head>div:first-child{flex:1 1 auto;min-width:0}
+  .page-head p{font-size:12px!important;margin:0!important}
+  .slogan{display:none!important}
+
+  /* Плитки сверху: смена, ближайшая задача, часы — друг под другом */
+  .top-tiles{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important}
+  .top-tiles .tile{min-height:0!important;height:auto!important;padding:10px 12px!important}
+  .shift-tile-row{gap:8px!important}
+  .shift-info-block b{white-space:normal!important;font-size:14px!important;line-height:1.25}
+  .shift-summary-btn{min-height:40px}
+  .shift-summary-btn img{width:26px;height:26px}
+  .clock,.modern-clock{flex-wrap:wrap;gap:8px 14px!important;justify-content:space-between}
+  .clock-date-icon-new,.clock-time-icon,.clock-divider,.clock-brand-mark{display:none!important}
+  .clock-date-block,.clock-time-block{min-width:0}
+
+  /* Счётчики: 3 в ряд (их 9) */
+  .mini-dashboard{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:6px!important;margin:10px 0 0!important}
+  .dash-card{min-height:52px!important;padding:6px 3px!important;align-items:center!important;text-align:center;gap:2px!important;border-radius:11px!important;min-width:0}
+  .dash-card strong{font-size:18px!important}
+  .dash-card span{font-size:10px!important;line-height:1.15!important;white-space:normal!important;overflow-wrap:anywhere}
+
+  /* Поиск и фильтры */
+  .tools,.smart-tools{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+  .tools>*{min-width:0!important;width:auto!important}
+  .tools .search,.tools input[type="search"],.tools>input,.tools>label:first-child{grid-column:1 / -1}
+  .tools input,.tools select{font-size:14px!important}
+  .density-toggle{display:inline-flex!important;flex-direction:row!important;flex-wrap:nowrap;max-width:100%}
+
+  /* Карточки задач */
+  .task{min-width:0;grid-template-columns:24px minmax(0,1fr)!important;gap:6px 8px!important;padding:11px 11px 9px!important}
+  .task-side{grid-column:2 / -1!important;width:auto!important;flex-direction:row!important;align-items:center!important;justify-content:flex-start!important;flex-wrap:wrap;gap:6px!important}
+  .task .task-meta-right{flex-wrap:wrap}
+  .task .task-actions{margin-left:auto}
+  .task h3{font-size:16px!important;overflow-wrap:anywhere}
+  .task p{font-size:13px!important;overflow-wrap:anywhere}
+  .task-actions,.task .actions{flex-wrap:wrap!important}
+
+  /* Окна */
+  dialog{width:calc(100% - 12px)!important;max-width:none!important;padding:14px!important;border-radius:16px!important;margin:auto}
+  dialog h2{font-size:20px}
+  dialog .row,dialog .grid2,dialog .form-grid{grid-template-columns:minmax(0,1fr)!important}
+
+  /* Таблицы (статистика, история): прокрутка внутри блока, а не всей страницы */
+  table{display:block;max-width:100%;overflow-x:auto}
+
+  /* Настройки */
+  .settings-row{flex-wrap:wrap!important;gap:10px!important;padding:12px!important}
+  .settings-row>div:first-child{flex:1 1 100%!important;min-width:0}
+  .settings-row select,.settings-row input:not([type="checkbox"]):not([type="radio"]){max-width:100%;min-width:0}
+  .settings-row-toggle{flex-wrap:nowrap!important}
+  .settings-row-toggle>div:first-child{flex:1 1 auto!important}
+  .settings-section-head{padding:12px!important}
+  .sched-order-row,.sched-order,label:has(#schedDayStart){flex-wrap:wrap!important;max-width:100%}
+  .sched-order-row select{min-width:0;flex:1 1 60px}
+  .tech-add-row{flex-wrap:wrap;gap:8px!important}
+  .tech-add-row input{flex:1 1 0!important;width:auto!important;min-width:0!important}
+  .stage4-actions,.stage4-data-head .stage4-actions{flex:none!important;width:100%!important;max-width:none!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;grid-auto-rows:auto!important;align-content:start}
+  .stage4-data-head{height:auto!important;flex-wrap:wrap}
+  .compact-db-info,#dbInfoGrid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .db-info-path{grid-column:1 / -1!important;overflow-wrap:anywhere}
+  .archive-clear-row{flex-wrap:wrap}
+}
+/* ---------- то, чего на телефоне нет ---------- */
+.grass-mobile-hidden{display:none!important}
