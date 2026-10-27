@@ -1,13 +1,14 @@
 {
   "name": "grass-shift-handover",
-  "version": "1.6.2",
-  "description": "GRASS — Передача смены — площадки Ахтуба и Волжский, общий список технологов",
+  "version": "1.7.11",
+  "description": "GRASS — Передача смены — площадки Ахтуба и Волжский: смены, передача, сводка, исполнители, вложения",
   "main": "main.js",
   "author": "GRASS",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --x64 --publish never"
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "test": "node --test tests/shifts.test.js tests/stats.test.js tests/reglament.test.js tests/journal.test.js tests/comments.test.js tests/export.test.js"
   },
   "devDependencies": {
     "electron": "^38.1.0",
@@ -23,8 +24,26 @@
       "index.html",
       "main.js",
       "preload.js",
+      "shifts.js",
+      "stats.js",
+      "reglament.js",
+      "ui-reglament.js",
+      "journal.js",
+      "ui-journal.js",
+      "comments.js",
+      "ui-schedule.js",
+      "ui-notify.js",
+      "export.js",
+      "ui-export.js",
+      "ui-subtasks.js",
+      "ui-watch.js",
+      "ui-announce.js",
+      "ui-whatsnew.js",
+      "styles.css",
       "package.json",
       "GRASS_icon.ico",
+      "img/**/*",
+      "fonts/**/*",
       "shift-summary-icon.png"
     ],
     "win": {

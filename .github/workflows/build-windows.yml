@@ -47,10 +47,26 @@ jobs:
         run: |
           node --check main.js
           node --check preload.js
+          node --check shifts.js
+          node --check stats.js
+          node --check reglament.js
+          node --check journal.js
+          node --check comments.js
+          node --check export.js
+          node --check ui-reglament.js
+          node --check ui-journal.js
+          node --check ui-schedule.js
+          node --check ui-notify.js
+          node --check ui-export.js
+          if (-not (Test-Path 'img/background.webp')) { throw 'img folder not found' }
           if (-not (Test-Path 'index.html')) { throw 'index.html not found' }
+          if (-not (Test-Path 'styles.css')) { throw 'styles.css not found' }
           if (-not (Test-Path 'GRASS_icon.ico')) { throw 'GRASS_icon.ico not found' }
           if (-not (Test-Path 'shift-summary-icon.png')) { throw 'shift-summary-icon.png not found' }
           if (-not (Test-Path 'package.json')) { throw 'package.json not found' }
+
+      - name: Logic tests (shifts, statistics, reglament, journal, comments, export)
+        run: npm test
 
       - name: Build NSIS installer
         run: npm run dist:win
