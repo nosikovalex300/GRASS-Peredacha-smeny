@@ -570,6 +570,22 @@
       var b = byId(id);
       if (b) { b.textContent = '⬇ Печать'; b.title = 'Страница для печати: откройте в браузере → Печать → Сохранить как PDF'; }
     });
+    // Списки «Технолог» и «Смена»: открыт только один.
+    [['techBtn', 'shiftMenu'], ['shiftBtn', 'techMenu']].forEach(function (pair) {
+      var b = byId(pair[0]);
+      if (b) b.addEventListener('click', function () { var other = byId(pair[1]); if (other) other.classList.remove('open'); }, true);
+    });
+    // Ближайшая задача: на ПК дата повторяется дважды («27.10.2026 · 22:07 · Срок: 27.10.2026 22:07 (через …)»).
+    var near = byId('nearestTaskMeta');
+    if (near && window.MutationObserver) {
+      var fixNear = function () {
+        var t = near.textContent, m = /^(\d\d\.\d\d\.\d{4}) · (\d\d:\d\d) · Срок: \1 \2 \(через (.+)\)$/.exec(t);
+        if (m) near.textContent = 'Срок: ' + m[1] + ' ' + m[2] + ' · через ' + m[3];
+      };
+      fixNear();
+      new MutationObserver(fixNear).observe(near, { childList: true, characterData: true, subtree: true });
+    }
+    stickyHeader();
     var mode = byId('dbInfoMode');
     if (mode && window.MutationObserver) {
       var fixMode = function () { if (/компьютере/.test(mode.textContent)) mode.textContent = 'Своя база на этом телефоне'; };
@@ -601,6 +617,27 @@
       restoreBtn.insertAdjacentElement('afterend', btn);
       btn.insertAdjacentElement('afterend', input);
     }
+  }
+
+  // Шапка: когда она уехала вверх при прокрутке, строка «GRASS + Добавить задачу» закрепляется сверху.
+  function stickyHeader() {
+    var side = document.getElementById('sidebar'), brand = side && side.querySelector('.brand');
+    if (!side || !brand) return;
+    var on = false, basePad = null;
+    var update = function () {
+      var phone = window.matchMedia('(max-width:760px)').matches;
+      if (basePad === null || !on) basePad = parseFloat(getComputedStyle(side).paddingTop) || 0;
+      var limit = side.offsetTop + side.offsetHeight - 60;
+      var want = phone && window.scrollY > limit;
+      if (want === on) return;
+      var h = brand.offsetHeight + (parseFloat(getComputedStyle(side).rowGap) || 0);
+      on = want;
+      document.body.classList.toggle('m-bar', on);
+      side.style.paddingTop = on ? (basePad + h) + 'px' : '';
+    };
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
   }
 
   // Кнопка «Назад» на Android: закрывает окно/меню, а не приложение.

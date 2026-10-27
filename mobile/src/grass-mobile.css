@@ -2,7 +2,9 @@
    Подключаются ПОСЛЕДНИМИ и только в Android-версии; десктопные index.html и styles.css не меняются.
    На телефоне: боковое меню → шапка (технолог, смена, площадка) + нижняя панель разделов + круглая кнопка «+». */
 
-:root{--m-safe-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));--m-safe-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px));--m-nav-h:62px}
+/* Отступы под системные панели не добавляем: Android сам ставит окно приложения между строкой состояния
+   и кнопками навигации, а Capacitor всё равно передаёт их высоту — отступ получался двойной (пустая полоса под меню). */
+:root{--m-safe-top:0px;--m-safe-bottom:0px;--m-nav-h:62px}
 
 /* ---------- служебные блоки моста ---------- */
 #grass-mobile-banner{position:fixed;left:12px;right:12px;bottom:calc(var(--m-nav-h) + 14px + var(--m-safe-bottom));z-index:9999;padding:12px 14px;border-radius:12px;font-size:13px;line-height:1.35;box-shadow:0 8px 24px #0008}
@@ -23,13 +25,13 @@ input[type="datetime-local"]{min-height:44px;color-scheme:dark}
 
 /* ---------- телефон ---------- */
 @media (max-width:760px){
-  html,body{max-width:100%;overflow-x:hidden}
-  body{min-height:100dvh;padding-bottom:calc(var(--m-nav-h) + 8px + var(--m-safe-bottom))!important}
+  html,body{max-width:100%;overflow-x:clip}   /* clip, а не hidden: hidden ломает липкую шапку */
+  body{min-height:100dvh;padding-bottom:calc(var(--m-nav-h) + 16px + var(--m-safe-bottom))!important}
 
   /* Каркас: меню больше не слева */
   .app-shell{display:block!important;min-height:0!important}
   .app-main{display:block!important}
-  .sidebar{position:relative!important;top:auto!important;height:auto!important;width:auto!important;padding:calc(10px + var(--m-safe-top)) 12px 8px!important;gap:8px!important;border-right:0!important;border-bottom:1px solid rgba(0,220,107,.14);backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transform:none!important;filter:none!important;z-index:40!important;flex-direction:column!important}
+  .sidebar{position:relative!important;top:auto!important;background:#02130e!important;height:auto!important;width:auto!important;padding:calc(10px + var(--m-safe-top)) 12px 8px!important;gap:8px!important;border-right:0!important;border-bottom:1px solid rgba(0,220,107,.14);backdrop-filter:none!important;-webkit-backdrop-filter:none!important;transform:none!important;filter:none!important;z-index:40!important;flex-direction:column!important}
   .sidebar .brand{gap:8px!important}
   .sidebar .brand-logo{width:30px!important;height:30px!important}
   .sidebar .brand b{font-size:17px!important}
@@ -44,7 +46,9 @@ input[type="datetime-local"]{min-height:44px;color-scheme:dark}
   .side-person .tech-coat-icon{display:none!important}
   .side-site{grid-column:1 / -1}
   .side-site .change-site-btn{padding:6px 10px!important;font-size:12px!important}
-  .side-person .menu{max-height:55vh;overflow:auto;z-index:60}
+  /* Списки технологов и смен открываются ВНИЗ (на ПК — вверх, они там внизу бокового меню) */
+  .side-person .menu{top:calc(100% + 4px)!important;bottom:auto!important;max-height:min(55vh,420px)!important;overflow:auto;z-index:60!important}
+  .side-person .select-wrap{position:relative}
 
   /* Нижняя панель разделов */
   .sidebar nav{position:fixed!important;left:0!important;right:0!important;bottom:0!important;top:auto!important;width:auto!important;transform:none!important;z-index:50!important;
@@ -55,9 +59,13 @@ input[type="datetime-local"]{min-height:44px;color-scheme:dark}
   .sidebar nav button span{font-size:10px!important;line-height:1.1;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sidebar nav .nav-badge{position:absolute!important;top:2px;right:6px;margin:0!important;transform:scale(.85)}
 
-  /* «Добавить задачу» — круглая кнопка над панелью */
-  .sidebar .side-add{position:fixed!important;right:14px;bottom:calc(var(--m-nav-h) + 18px + var(--m-safe-bottom));width:58px!important;height:58px!important;border-radius:50%!important;z-index:55;font-size:0!important;padding:0!important;box-shadow:0 6px 20px rgba(0,0,0,.5),0 0 18px rgba(0,220,107,.4)!important}
-  .sidebar .side-add::before{content:"+";font-size:34px;line-height:1;font-weight:500}
+  /* «Добавить задачу» — в строке с логотипом (не закрывает плитки и карточки) */
+  .sidebar .side-add{position:absolute!important;top:calc(8px + var(--m-safe-top));right:12px;width:auto!important;height:36px!important;padding:0 14px!important;border-radius:10px!important;font-size:14px!important;z-index:45}
+  .sidebar .brand{min-height:36px}
+  /* Прокрутили ниже шапки — строка «GRASS + Добавить задачу» закрепляется сверху (класс ставит мост).
+     Место под неё в шапке держит мост (padding-top), чтобы страница не прыгала. */
+  body.m-bar .sidebar .brand{position:fixed!important;top:0;left:0;right:0;z-index:44;height:52px;box-sizing:border-box;padding:calc(8px + var(--m-safe-top)) 12px 8px!important;background:#02130e!important;border-bottom:1px solid rgba(0,220,107,.22);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+  body.m-bar .sidebar .side-add{position:fixed!important;top:calc(8px + var(--m-safe-top))}
 
   /* Экраны */
   .screen{padding:8px 10px 16px!important;max-width:none!important}
@@ -72,6 +80,7 @@ input[type="datetime-local"]{min-height:44px;color-scheme:dark}
   .top-tiles .tile{min-height:0!important;height:auto!important;padding:10px 12px!important}
   .shift-tile-row{gap:8px!important}
   .shift-info-block b{white-space:normal!important;font-size:14px!important;line-height:1.25}
+  #nearestTaskTitle,#nearestTaskMeta{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere}
   .shift-summary-btn{min-height:40px}
   .shift-summary-btn img{width:26px;height:26px}
   .clock,.modern-clock{flex-wrap:wrap;gap:8px 14px!important;justify-content:space-between}

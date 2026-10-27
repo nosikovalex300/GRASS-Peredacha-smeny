@@ -218,3 +218,70 @@ test('A07 обновление с Android 1.6.1: задачи и техноло�
   assert.deepEqual(page.errors, []);
   await ctx.close();
 });
+
+// Косяки со скринов Сани (27.10): списки вверх и оба открыты, «+» на плитке, повтор даты, полоса под меню.
+test('A08 шапка и меню на телефоне: списки вниз и по одному, «+» не закрывает плитки, срок без повтора даты', { skip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 360, height: 760 }, isMobile: true, hasTouch: true, locale: 'ru-RU', timezoneId: 'Europe/Volgograd' });
+  const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(srv.url); await ready(page);
+  await chooseSite(page, 'AHTUBA');
+  // Capacitor на телефоне передаёт высоту системной панели — отступ не должен добавляться второй раз.
+  await page.evaluate(() => { document.documentElement.style.setProperty('--safe-area-inset-bottom', '48px'); document.documentElement.style.setProperty('--safe-area-inset-top', '24px'); });
+  await click(page, '#addBtn'); await page.waitForTimeout(150);
+  await page.fill('#text', 'Тест');
+  await page.evaluate(() => { const d = new Date(Date.now() + 600e3), z = n => String(n).padStart(2, '0'); document.getElementById('deadline').value = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`; document.getElementById('form').requestSubmit(); });
+  await page.waitForTimeout(300);
+
+  // 1. Списки открываются вниз, целиком на экране, открыт только один.
+  const rect = sel => page.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, h: innerHeight }; }, sel);
+  await click(page, '#techBtn');
+  const tm = await rect('#techMenu'), tb = await rect('#techBtn');
+  assert.ok(tm.top >= tb.bottom, `список технологов под кнопкой (${tm.top} >= ${tb.bottom})`);
+  assert.ok(tm.top >= 0 && tm.bottom <= tm.h, 'список технологов целиком на экране');
+  await click(page, '#shiftBtn');
+  const openMenus = await page.$$eval('.side-person .menu.open', els => els.map(e => e.id));
+  assert.deepEqual(openMenus, ['shiftMenu'], 'открыт только список смен');
+  const sm = await rect('#shiftMenu'), sb = await rect('#shiftBtn');
+  assert.ok(sm.top >= sb.bottom && sm.bottom <= sm.h, 'список смен вниз и на экране');
+  await page.evaluate(() => document.querySelector('#shiftMenu button').click());
+  await page.evaluate(() => document.querySelector('.page-head').click());
+
+  // 2. «Добавить задачу» не лежит ни на одной плитке и карточке — ни сверху страницы, ни при прокрутке.
+  const overlaps = () => page.evaluate(() => {
+    const a = document.getElementById('addBtn').getBoundingClientRect();
+    return [...document.querySelectorAll('.dash-card,.task,.tile')].filter(e => {
+      const r = e.getBoundingClientRect();
+      if (!r.width) return false;
+      // при прокрутке плитки уходят ПОД закреплённую строку — это нормально, если строка непрозрачная и плитка ниже неё
+      const bar = document.body.classList.contains('m-bar') ? document.querySelector('.sidebar .brand').getBoundingClientRect().bottom : -1;
+      if (r.top < bar) return false;
+      return r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top;
+    }).map(e => e.className);
+  });
+  assert.deepEqual(await overlaps(), [], 'вверху страницы');
+  for (const y of [300, 700, 1200]) {
+    await page.evaluate(v => window.scrollTo(0, v), y); await page.waitForTimeout(100);
+    assert.deepEqual(await overlaps(), [], `прокрутка ${y}`);
+    const a = await rect('#addBtn');
+    assert.ok(a.top >= 0 && a.bottom <= 80, `при прокрутке ${y} кнопка видна вверху (${a.top})`);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => document.body.classList.contains('m-bar')), false);
+
+  // 3. Ближайшая задача: дата один раз, строка не обрезается многоточием.
+  const meta = await page.textContent('#nearestTaskMeta');
+  assert.match(meta, /^Срок: \d\d\.\d\d\.\d{4} \d\d:\d\d · через \d+ минут/);
+  assert.equal((meta.match(/\d\d\.\d\d\.\d{4}/g) || []).length, 1, meta);
+  assert.equal(await page.evaluate(() => { const e = document.getElementById('nearestTaskMeta'); return e.scrollWidth <= e.clientWidth + 1; }), true);
+
+  // 4. Нижнее меню прижато к низу, без лишней полосы от системной панели; последний ряд плиток можно докрутить над меню.
+  const nav = await page.evaluate(() => { const r = document.querySelector('.sidebar nav').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: innerHeight }; });
+  assert.equal(Math.round(nav.bottom), nav.h);
+  assert.ok(nav.bottom - nav.top <= 72, `высота меню ${nav.bottom - nav.top}`);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await page.waitForTimeout(100);
+  const lastBottom = await page.evaluate(() => Math.max(...[...document.querySelectorAll('#screen-tasks .dash-card,#screen-tasks .task')].map(e => e.getBoundingClientRect().bottom)));
+  assert.ok(lastBottom <= nav.top, `в самом низу всё видно над меню (${lastBottom} <= ${nav.top})`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
