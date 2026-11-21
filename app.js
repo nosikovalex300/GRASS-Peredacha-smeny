@@ -1,0 +1,2015 @@
+// GRASS — Передача смены · основной скрипт окна (до 1.7.12 был встроен в index.html; вынесен для защиты окна — CSP).
+const $=x=>document.getElementById(x);
+const SITE_LABELS={AHTUBA:'Ахтуба',VOLZHSKY:'Волжский'};
+const initialSiteSelected=!!localStorage.getItem('grass_selected_site');
+const currentSite=()=>grassSite?.get?.()||'AHTUBA';
+function applySiteUi(){
+  const site=currentSite();
+  const badge=$('siteBadge'); if(badge)badge.textContent=(SITE_LABELS[site]||'Ахтуба').toUpperCase();
+}
+function chooseSite(site){
+  const normalized=site==='VOLZHSKY'?'VOLZHSKY':'AHTUBA';
+  try{localStorage.setItem('grass_selected_site',normalized);}catch(_){}
+  grassSite?.set?.(normalized);
+  location.reload();
+}
+const siteGate=$('siteGate');
+if(siteGate){
+  siteGate.classList.toggle('hidden',initialSiteSelected);
+  siteGate.querySelectorAll('[data-site-choice]').forEach(btn=>btn.addEventListener('click',()=>chooseSite(btn.dataset.siteChoice)));
+}
+$('changeSiteBtn')?.addEventListener('click',()=>{siteGate?.classList.remove('hidden');});
+applySiteUi();
+
+const K='grass_v02';
+// 1.7.2: общая база в терминале — с ней одновременно работают несколько технологов.
+const GRASS_MODE=(()=>{try{return grassStorage.mode?.()||{shared:false};}catch(_){return {shared:false};}})();
+const SHARED_MODE=!!GRASS_MODE.shared;
+let readOnly=false;
+let db=JSON.parse(grassStorage.getItem(K)||'{"tasks":[],"history":[],"archive":[],"statsArchive":[],"clearedArchiveIds":[]}');
+// Номер последнего изменения базы, которое уже есть в окне: дальше подтягиваем только то, что новее.
+let syncSeq=Number(db.changeSeq)||0;delete db.changeSeq;
+const dbLoadError=!!db.__loadError;
+if(db.__loadError){
+  const err=db.__loadError;
+  db={tasks:[],history:[],archive:[],statsArchive:[],clearedArchiveIds:[]};
+  readOnly=true;
+  setTimeout(()=>{const el=document.createElement('div');el.id='grass-load-error';el.innerHTML='<div><p></p><button type="button" data-open-restore>↻ Восстановить из резервной копии</button></div>';el.querySelector('p').textContent=`Не удалось прочитать базу данных.\n\n${err}\n\nЗакройте программу и откройте её снова. Если ошибка повторяется — восстановите базу из резервной копии или обратитесь к администратору. Ничего не сохраняется, пока база недоступна.`;document.body.appendChild(el);},0);
+}
+db.archive=db.archive||[];db.statsArchive=db.statsArchive||[];db.clearedArchiveIds=db.clearedArchiveIds||[];
+let dashboardFilter='all';
+let editId=null,priority='Обычный',shift=null;
+let technologist=grassStorage.getItem('technologist')||'Носиков А.Ю.';
+// 1.7.12: на общей базе с администраторами технолог закреплён за учёткой Windows — программа сама открывается под ним.
+let techBinding=(()=>{try{return grassStorage.bindState?.()||{enabled:false};}catch(_){return {enabled:false};}})();
+if(techBinding.enabled&&techBinding.bound)technologist=techBinding.bound;
+const bindPending=()=>!!(techBinding.enabled&&!techBinding.bound);
+let autoArchiveEnabled=grassStorage.getItem('autoArchiveEnabled')==='true';
+let autoArchiveDays=Number(grassStorage.getItem('autoArchiveDays')||7);
+if(![7,14,30].includes(autoArchiveDays))autoArchiveDays=7;
+if(!Array.isArray(db.tasks))db.tasks=[];
+if(!Array.isArray(db.history))db.history=[];
+
+const shifts={A:['08:30','20:30'],B:['20:30','08:30'],C:['08:30','20:30'],D:['20:30','08:30']};
+// 1.7.6 (п. 29): график смен из Настроек (общий для площадок); если его не меняли — как раньше.
+try{GrassShifts.configure(JSON.parse(grassStorage.getItem('shiftSchedule')||'null'));}catch(_){GrassShifts.configure(null);}
+// 1.7: правила смен — в shifts.js (GrassShifts). Здесь только обёртки для остального кода.
+function shiftStateOnDate(date,s){return GrassShifts.stateOnDate(date,s)}
+function activeShiftAt(date){return GrassShifts.activeShift(date)}
+function nextShift(s,at=new Date()){return GrassShifts.recipient(s,at)}
+// У какой смены задача сейчас: создала, приняла или восстановила.
+function holderShiftOf(t){return (t&&(t.holderShift||t.acceptedShift||t.shift))||null}
+// При открытии приложения автоматически выбираем смену, которая фактически работает сейчас по графику.
+// Сохранённый выбор используется только как резерв, если текущий момент не попадает в рабочую смену.
+shift=activeShiftAt(new Date()) || grassStorage.getItem('shift') || 'D';
+grassStorage.setItem('shift',shift);
+// Смена переключается сама ровно в 08:30 и 20:30 (без перезапуска). Технолог при этом не меняется.
+let autoShiftSeen=shift;
+function setCurrentShift(s){
+  shift=s;grassStorage.setItem('shift',s);
+  if($('shiftLabel'))$('shiftLabel').textContent='Смена '+s;
+  if($('autoShift'))$('autoShift').textContent='Смена '+s;
+  document.querySelectorAll('#shiftMenu button').forEach(b=>b.classList.toggle('active',b.textContent==='Смена '+s));
+  render();
+}
+// 1.7.4: если смену выбрали вручную не по графику — заметное предупреждение и кнопка «Вернуть».
+function renderShiftWarn(){
+  const el=$('shiftOffWarn');if(!el)return;
+  const a=activeShiftAt(new Date());
+  const off=!!a&&a!==shift;
+  el.hidden=!off;
+  $('shiftBtn')?.classList.toggle('off-schedule',off);
+  if(off)$('shiftOffText').textContent=`⚠ Выбрана смена ${shift} — не по графику. Сейчас работает смена ${a}.`;
+}
+$('shiftBackBtn')?.addEventListener('click',()=>{const a=activeShiftAt(new Date());if(a)setCurrentShift(a);});
+function autoShiftSync(){
+  const a=activeShiftAt(new Date());
+  if(!a||a===autoShiftSeen)return;
+  autoShiftSeen=a;
+  setCurrentShift(a);
+}
+// 1.7.1: сохранение только изменённого. Помним, что уже лежит в базе (отпечаток каждой задачи,
+// id событий истории, статистики и очищенного архива), и отправляем в main.js только отличия.
+// Если частичное сохранение не прошло — сохраняем всё целиком, как в 1.7.0.
+// 1.7.2: у каждой задачи номер версии в базе (_rev). Окно отправляет, какую версию оно меняло (baseRev);
+// если задачу за это время изменил другой технолог, база ничего не запишет и вернёт свежую версию.
+let savedState=null;
+const taskPrint=(state,t)=>state+'|'+JSON.stringify(t,(k,v)=>k==='_rev'?undefined:v);
+function captureSaved(){
+  const tasks=new Map(),revs=new Map();
+  for(const [list,state] of [[db.tasks,'active'],[db.archive,'archive']])for(const t of list||[])if(t&&t.id!=null){tasks.set(String(t.id),taskPrint(state,t));revs.set(String(t.id),Number(t._rev)||0);}
+  return {
+    tasks,revs,
+    history:new Set((db.history||[]).filter(h=>h&&h.id).map(h=>String(h.id))),
+    stats:new Map((db.statsArchive||[]).filter(t=>t&&t.id!=null).map(t=>[String(t.id),JSON.stringify(t)])),
+    cleared:new Set((db.clearedArchiveIds||[]).map(String))
+  };
+}
+function savePatch(){
+  const st=savedState,patch={tasks:[],taskDeletes:[],historyAdd:[],historyDeletes:[],stats:[],statsDeletes:[],clearedAdd:[],clearedDeletes:[]};
+  const next={tasks:new Map(),revs:new Map(st.revs),history:new Set(st.history),stats:new Map(),cleared:new Set()};
+  const byId=new Map();
+  for(const [list,state] of [[db.tasks,'active'],[db.archive,'archive']])for(const t of list||[]){
+    if(!t||t.id==null)continue;
+    const id=String(t.id),pr=taskPrint(state,t);
+    next.tasks.set(id,pr);byId.set(id,t);
+    if(st.tasks.get(id)!==pr)patch.tasks.push({state,task:t,baseRev:st.tasks.has(id)?(st.revs.get(id)??0):null});
+  }
+  for(const id of st.tasks.keys())if(!next.tasks.has(id)){patch.taskDeletes.push({id,baseRev:st.revs.get(id)??0});next.revs.delete(id);}
+  let present=0;
+  for(const h of db.history||[]){
+    if(!h||!h.id)continue;
+    const id=String(h.id);
+    if(st.history.has(id))present++;
+    else{patch.historyAdd.push(h);next.history.add(id);}
+  }
+  patch.historyAdd.reverse();   // история — новые сверху, в базу пишем от старых к новым
+  if(present!==st.history.size){
+    const now=new Set((db.history||[]).filter(h=>h&&h.id).map(h=>String(h.id)));
+    for(const id of st.history)if(!now.has(id)){patch.historyDeletes.push(id);next.history.delete(id);}
+  }
+  for(const t of db.statsArchive||[]){
+    if(!t||t.id==null)continue;
+    const id=String(t.id),json=JSON.stringify(t);
+    next.stats.set(id,json);
+    if(st.stats.get(id)!==json)patch.stats.push(t);
+  }
+  for(const id of st.stats.keys())if(!next.stats.has(id))patch.statsDeletes.push(id);
+  for(const id of (db.clearedArchiveIds||[]).map(String)){next.cleared.add(id);if(!st.cleared.has(id))patch.clearedAdd.push(id);}
+  for(const id of st.cleared)if(!next.cleared.has(id))patch.clearedDeletes.push(id);
+  const empty=Object.values(patch).every(v=>!v.length);
+  if(!empty){
+    const r=grassStorage.patch(K,JSON.stringify(patch));
+    if(r&&Array.isArray(r.conflicts)&&r.conflicts.length){resolveConflicts(r.conflicts,patch);return {conflict:true};}
+    if(!r||r.ok!==true)return {ok:false,error:r?.error||'нет ответа от базы',outdated:!!r?.outdated};
+    for(const [id,rev] of Object.entries(r.revs||{})){next.revs.set(id,rev);const t=byId.get(id);if(t)t._rev=rev;}
+  }
+  savedState=next;
+  return {ok:true};
+}
+// Несколько сохранений внутри одного действия (форма, «Принять все») отправляются одним пакетом.
+let saveBatch=0,saveWanted=false,saveFailing=false,saveRetryTimer=null,conflictQuiet=false;
+function inBatch(fn){saveBatch++;try{return fn();}finally{saveBatch--;if(!saveBatch&&saveWanted){saveWanted=false;save();}}}
+function save(){
+  if(readOnly)return;
+  if(saveBatch>0){saveWanted=true;return;}
+  if(savedState&&typeof grassStorage.patch==='function'){
+    let last=null;
+    for(let attempt=0;attempt<4;attempt++){
+      try{last=savePatch();}catch(e){last={ok:false,error:String(e&&e.message||e)};}
+      if(last.ok){saveSucceeded();return;}
+      if(last.conflict)continue;   // свежие версии уже в окне — отправляем остальное ещё раз
+      break;
+    }
+    if(last&&last.outdated){setReadOnly(last.newer?newerVersionText(last.newer):'Программу обновили на сервере. Закройте её и откройте снова — до этого изменения не сохраняются.');return;}
+    // В общей базе нельзя сохранять целиком (это стёрло бы чужие задачи) — повторяем, пока не получится.
+    if(SHARED_MODE){saveFailed(last?.error||'конфликт не разрешился');return;}
+    console.warn('GRASS: частичное сохранение не прошло, сохраняю целиком',last?.error);
+  }
+  const r=grassStorage.setItem(K,JSON.stringify(db));
+  if(r&&r.ok===false){saveFailed(r.error);return;}
+  savedState=captureSaved();
+  saveSucceeded();
+}
+function saveBar(){let el=$('grass-save-error');if(!el){el=document.createElement('div');el.id='grass-save-error';el.hidden=true;document.body.appendChild(el);}return el;}
+function saveFailed(error){
+  saveFailing=true;
+  const el=saveBar();el.textContent=`⚠ Изменения не сохранены: ${error||'база недоступна'}. Повторяю каждые 5 секунд — не закрывайте программу.`;el.hidden=false;
+  clearTimeout(saveRetryTimer);saveRetryTimer=setTimeout(()=>save(),5000);
+}
+function saveSucceeded(){
+  if(!saveFailing)return;
+  saveFailing=false;clearTimeout(saveRetryTimer);
+  const el=saveBar();el.textContent='✓ Изменения сохранены.';setTimeout(()=>{if(!saveFailing)el.hidden=true;},2500);
+}
+function setReadOnly(text){
+  readOnly=true;clearTimeout(saveRetryTimer);
+  const el=saveBar();el.textContent='⚠ '+text;el.hidden=false;
+}
+function findTaskAny(id){
+  id=String(id);
+  let i=db.tasks.findIndex(t=>String(t.id)===id);if(i>=0)return {state:'active',t:db.tasks[i]};
+  i=(db.archive||[]).findIndex(t=>String(t.id)===id);if(i>=0)return {state:'archive',t:db.archive[i]};
+  return null;
+}
+function removeTaskEverywhere(id){
+  id=String(id);
+  db.tasks=db.tasks.filter(t=>String(t.id)!==id);
+  db.archive=(db.archive||[]).filter(t=>String(t.id)!==id);
+}
+function placeTask(state,t){
+  if(state==='archive'){db.archive.unshift(t);return;}
+  const key=t.createdAt||t.date||'';
+  let i=db.tasks.findIndex(x=>(x.createdAt||x.date||'')<key);
+  if(i<0)i=db.tasks.length;
+  db.tasks.splice(i,0,t);
+}
+function hhmm(v){const d=parseStoredDate?.(v)||new Date(v);return d&&!isNaN(d)?d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'';}
+function whoChanged(t){return `${t?.lastActionBy||'другой технолог'}${t?.lastActionAt?` в ${hhmm(t.lastActionAt)}`:''}`;}
+// Задачу успели изменить другие: показываем версию из базы, а несохранённые события этой задачи убираем.
+function resolveConflicts(conflicts,patch){
+  const st=savedState,msgs=[];
+  for(const c of conflicts){
+    const id=String(c.id),mine=findTaskAny(id);
+    const title=mine?.t?.text||c.task?.text||'';
+    const unsaved=new Set((patch.historyAdd||[]).filter(h=>String(h.taskId)===id).map(h=>String(h.id)));
+    if(unsaved.size)db.history=db.history.filter(h=>!unsaved.has(String(h.id)));
+    const savedStat=st.stats.get(id);
+    db.statsArchive=(db.statsArchive||[]).filter(t=>String(t.id)!==id);
+    if(savedStat!==undefined)db.statsArchive.push(JSON.parse(savedStat));
+    removeTaskEverywhere(id);
+    if(c.deleted){st.tasks.delete(id);st.revs.delete(id);msgs.push(`Задачу «${title}» только что удалили — ваши изменения в ней не сохранены.`);}
+    else{placeTask(c.state,c.task);st.tasks.set(id,taskPrint(c.state,c.task));st.revs.set(id,Number(c.task._rev)||0);msgs.push(`Задачу «${title}» только что изменил ${whoChanged(c.task)}. Ваши изменения в ней не сохранены — показана свежая версия.`);}
+  }
+  if(!conflictQuiet&&msgs.length)toast(msgs.join(' '));
+  setTimeout(()=>{render();renderHistory();renderStats();renderArchive();syncArchiveClearState();},0);
+}
+// Подтягиваем изменения других технологов (общая база, раз в 3 секунды и перед важными действиями).
+// 1.7.11: с базой уже работает копия новее этой — сохранять нельзя, просим перезайти (мягкое обновление в терминале).
+function newerVersionText(v){return `Вышла новая версия программы ${v}. Закройте программу и откройте снова — до этого изменения не сохраняются.`;}
+function pullRemoteChanges(){
+  if(!SHARED_MODE||readOnly||saveFailing||typeof grassStorage.changes!=='function')return false;
+  let ch;
+  try{ch=grassStorage.changes(syncSeq);}catch(e){console.warn('GRASS: не удалось получить изменения',e);return false;}
+  if(ch&&ch.newer){setReadOnly(newerVersionText(ch.newer));return false;}
+  if(!ch||!ch.ok||!(Number(ch.seq)>syncSeq))return false;
+  syncSeq=Number(ch.seq);
+  return applyRemoteChanges(ch);
+}
+function applyRemoteChanges(ch){
+  const st=savedState,touched=new Set();
+  let changed=false;
+  for(const d of ch.deleted||[]){
+    const id=String(d.id);
+    if(d.kind==='task'){if(st.tasks.has(id)||findTaskAny(id)){removeTaskEverywhere(id);st.tasks.delete(id);st.revs.delete(id);touched.add(id);changed=true;}}
+    else if(d.kind==='history'){if(st.history.has(id)){db.history=db.history.filter(h=>String(h.id)!==id);st.history.delete(id);changed=true;}}
+    else if(d.kind==='stats'){if(st.stats.has(id)){db.statsArchive=db.statsArchive.filter(t=>String(t.id)!==id);st.stats.delete(id);changed=true;}}
+    else if(d.kind==='cleared'){if(st.cleared.has(id)){db.clearedArchiveIds=db.clearedArchiveIds.filter(x=>String(x)!==id);st.cleared.delete(id);changed=true;}}
+  }
+  for(const item of ch.tasks||[]){
+    const t=item.task,id=String(t.id),loc=findTaskAny(id);
+    if(loc&&loc.state===item.state&&st.revs.get(id)===(Number(t._rev)||0))continue;
+    removeTaskEverywhere(id);placeTask(item.state,t);
+    st.tasks.set(id,taskPrint(item.state,t));st.revs.set(id,Number(t._rev)||0);
+    touched.add(id);changed=true;
+  }
+  const newHist=(ch.history||[]).filter(h=>h&&h.id&&!st.history.has(String(h.id)));
+  if(newHist.length){db.history.push(...newHist);newHist.forEach(h=>st.history.add(String(h.id)));sortHistory();changed=true;}
+  for(const t of ch.stats||[]){
+    const id=String(t.id),json=JSON.stringify(t);
+    if(st.stats.get(id)===json)continue;
+    db.statsArchive=db.statsArchive.filter(x=>String(x.id)!==id);db.statsArchive.push(t);st.stats.set(id,json);changed=true;
+  }
+  for(const raw of ch.cleared||[]){const id=String(raw);if(st.cleared.has(id))continue;db.clearedArchiveIds.push(id);st.cleared.add(id);changed=true;}
+  if(ch.settingsChanged){reloadSharedSettings();changed=true;}
+  if(!changed)return false;
+  if($('dlg')?.open&&editId&&touched.has(String(editId))){
+    const cur=db.tasks.find(x=>String(x.id)===String(editId));
+    showDlgNotice(cur?`Эту задачу только что изменил ${whoChanged(cur)}. Когда нажмёте «Сохранить», программа покажет, что поменялось.`:'Эту задачу только что перенесли в архив или удалили. Сохранить изменения не получится.');
+  }
+  render();renderHistory();renderStats();renderArchive();syncArchiveClearState();
+  return true;
+}
+function reloadSharedSettings(){
+  try{const list=JSON.parse(grassStorage.getItem('technologists')||'null');if(Array.isArray(list)&&list.length)technologists=list;}catch(_){}
+  autoArchiveEnabled=grassStorage.getItem('autoArchiveEnabled')==='true';
+  autoArchiveDays=Number(grassStorage.getItem('autoArchiveDays')||7);if(![7,14,30].includes(autoArchiveDays))autoArchiveDays=7;
+  escalationHours=Number(grassStorage.getItem('escalationHours')||2);if(![1,2,4,8].includes(escalationHours))escalationHours=2;
+  if($('escalationHours'))$('escalationHours').value=String(escalationHours);
+  renderTechnologistMenu();renderSettingsTechnologists();syncAutoArchiveSettings();
+  settingsReloadHooks.forEach(f=>{try{f();}catch(e){console.warn('GRASS: настройки',e);}});
+}
+// 1.7.6: модули (регламент, журнал, график) подписываются, чтобы перечитать свои общие настройки.
+const settingsReloadHooks=[];
+// 1.7.6: модули (журнал смены) дорисовывают своё после списка задач и сводки смены.
+var renderHooks=[],summaryHooks=[];
+// 1.7.11: модули (подпункты, «Слежу») добавляют значки в карточку и дополняют задачу при сохранении из окна.
+var taskBadgeHooks=[],taskSavedHooks=[];
+function showDlgNotice(text){const el=$('dlgNotice');if(!el)return;el.textContent=text;el.hidden=!text;}
+savedState=captureSaved();   // то, что сейчас загружено из базы
+function syncStatsArchive(){
+  const map=new Map((db.statsArchive||[]).map(t=>[String(t.id),t]));
+  (db.archive||[]).forEach(t=>{if(!map.has(String(t.id)))map.set(String(t.id),JSON.parse(JSON.stringify(t)))});
+  db.statsArchive=[...map.values()];
+}
+syncStatsArchive();
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function now(){let d=new Date(),weekday=d.toLocaleDateString('ru-RU',{weekday:'long'});weekday=weekday.charAt(0).toUpperCase()+weekday.slice(1);return {d,ds:d.toLocaleDateString('ru-RU'),weekday,ts:d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),iso:d.toISOString(),short:d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}}
+// 1.7: даты хранятся полностью (ISO, с годом); на экране — привычное «30.12, 10:00».
+const ISO_DATE_RE=/^\d{4}-\d{2}-\d{2}T/;
+function fmtShort(v){
+  if(!v)return '';
+  if(ISO_DATE_RE.test(String(v))){const d=new Date(v);if(!isNaN(d))return d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+  return String(v);
+}
+let lastEventMs=0;
+// Уникальное и растущее время события: порядок истории не зависит от совпадения миллисекунд.
+// Время события: строго по возрастанию, чтобы два события в одну миллисекунду не путались местами.
+// 1.7.9: но только в пределах минуты. Если в базе есть записи «из будущего» (часы компьютера переводили
+// вперёд, а потом вернули), новое событие пишется по настоящему времени, а не прилипает к той дате.
+const EVENT_TIE_MS=60000;
+function eventIso(d){let ms=d.getTime();if(ms<=lastEventMs&&lastEventMs-ms<EVENT_TIE_MS)ms=lastEventMs+1;lastEventMs=ms;return new Date(ms).toISOString();}
+// 1.7.9: последняя запись в базе позже, чем сейчас на часах, больше чем на 5 минут — часы компьютера сбиты.
+const CLOCK_SKEW_MS=5*60000;
+let clockWarnHidden=false;
+function latestEventMs(){return (db.history||[]).reduce((m,h)=>Math.max(m,histMs(h)),0);}
+function checkClock(){
+  const latest=latestEventMs(),behind=latest-Date.now();
+  let el=$('grass-clock-warn');
+  if(behind<=CLOCK_SKEW_MS||clockWarnHidden){if(el)el.hidden=true;return false;}
+  if(!el){
+    el=document.createElement('div');el.id='grass-clock-warn';el.setAttribute('role','alert');
+    el.innerHTML='<span id="grass-clock-warn-text"></span><button type="button" id="grass-clock-warn-close" title="Скрыть до перезапуска">×</button>';
+    document.body.appendChild(el);
+    $('grass-clock-warn-close').onclick=()=>{clockWarnHidden=true;el.hidden=true;};
+  }
+  const d=new Date(latest);
+  $('grass-clock-warn-text').textContent=`⚠ Часы компьютера отстают от последней записи в базе (${d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'})} ${d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}). Проверь дату и время на компьютере — новые записи пишутся по его часам.`;
+  el.hidden=false;
+  return true;
+}
+// История после загрузки — строго по времени, новые сверху.
+const histMs=h=>{const d=h&&h.at?new Date(h.at):null;return d&&!isNaN(d)?d.getTime():0;};
+function sortHistory(){
+  db.history=db.history.map((h,i)=>[h,i]).sort((a,b)=>(histMs(b[0])-histMs(a[0]))||(a[1]-b[1])).map(x=>x[0]);
+  lastEventMs=Math.max(lastEventMs,db.history.reduce((m,h)=>Math.max(m,histMs(h)),0));
+}
+if(Array.isArray(db.history))sortHistory();
+function deadlineText(value,stopAt){
+  if(!value)return '';
+  let d=new Date(value),n=stopAt?new Date(stopAt):new Date(),diff=d-n;
+  if(isNaN(d))return '';
+  let date=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}),time=d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  if(diff<=0){
+    let m=Math.floor(Math.abs(diff)/60000),days=Math.floor(m/1440);m%=1440;let h=Math.floor(m/60),min=m%60;
+    let parts=[];if(days)parts.push(days+' '+plural(days,'день','дня','дней'));if(h)parts.push(h+' '+plural(h,'час','часа','часов'));if(min||!parts.length)parts.push(min+' '+plural(min,'минуту','минуты','минут'));
+    return {text:'Просрочено на '+parts.join(' '),overdue:true};
+  }
+  let m=Math.floor(diff/60000),days=Math.floor(m/1440);m%=1440;let h=Math.floor(m/60),min=m%60;
+  let parts=[];if(days)parts.push(days+' '+plural(days,'день','дня','дней'));if(h)parts.push(h+' '+plural(h,'час','часа','часов'));if(min||!parts.length)parts.push(min+' '+plural(min,'минуту','минуты','минут'));
+  return {text:'Срок: '+date+' '+time+' (через '+parts.join(' ')+')',soon:diff<24*60*60*1000,urgent:diff<2*60*60*1000};
+}
+// 1.7.8: длительность словами — «2 дня 3 часа 5 минут».
+function durationText(ms){
+  let m=Math.floor(Math.abs(ms)/60000),days=Math.floor(m/1440);m%=1440;let h=Math.floor(m/60),min=m%60;
+  let parts=[];if(days)parts.push(days+' '+plural(days,'день','дня','дней'));if(h)parts.push(h+' '+plural(h,'час','часа','часов'));if(min||!parts.length)parts.push(min+' '+plural(min,'минуту','минуты','минут'));
+  return parts.join(' ');
+}
+// 1.7.8: срок в записи истории — на момент этого события, а не на сейчас (раньше у давно выполненной
+// задачи «Просрочено на …» росло каждый день). У выполненной — «выполнена в срок» или «с опозданием на …»
+// по моменту выполнения; у открытой — «на тот момент просрочено на …», если срок уже прошёл.
+function eventDeadlineHtml(h){
+  if(!h||!h.deadline)return '';
+  const dl=new Date(h.deadline),at=GrassStats.parseStoredDate(h.at||h.when);
+  if(isNaN(dl)||!at)return deadlineHtml(h.deadline);
+  const when=fmtDeadlineValue(h.deadline);
+  if(GrassStats.eventStatusOf(h)==='Выполнена'){
+    const done=completionEvents(h.taskId).map(c=>c.at).filter(d=>d&&d<=at).pop()||at;
+    return done>dl?`<p class="deadline overdue">⏱ Срок ${esc(when)} · выполнена с опозданием на ${esc(durationText(done-dl))}</p>`
+                  :`<p class="deadline ontime">⏱ Срок ${esc(when)} · выполнена в срок</p>`;
+  }
+  return at>dl?`<p class="deadline overdue">⏱ Срок ${esc(when)} · на тот момент просрочено на ${esc(durationText(at-dl))}</p>`
+              :`<p class="deadline">⏱ Срок ${esc(when)}</p>`;
+}
+// Карточка в «Истории»: у открытой задачи срок живой (как в списке задач), иначе — на момент последнего события.
+function historyCardDeadlineHtml(latest){
+  const t=db.tasks.find(x=>String(x.id)===String(latest.taskId));
+  return t&&t.status!=='Выполнена'&&t.deadline===latest.deadline?deadlineHtml(t.deadline,t.deadlineStoppedAt):eventDeadlineHtml(latest);
+}
+function restoredLine(t){return t&&t.restoredAt?`<p class="restored-line">↻ Восстановлена: ${esc(fmtShort(t.restoredAt))} · ${esc(t.restoredBy||'')}${t.restoredShift?` · смена ${esc(t.restoredShift)}`:''}</p>`:'';}
+function deadlineHtml(value,stopAt){let x=deadlineText(value,stopAt);return x?`<p class="deadline ${x.overdue?'overdue':x.urgent?'urgent':x.soon?'soon':''}">⏱ ${esc(x.text)}</p>`:''}
+
+function fmtDeadlineValue(v){
+  if(!v)return 'без срока';
+  const d=new Date(v);if(isNaN(d))return String(v);
+  return d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+}
+function fieldChanges(a,b){
+  const out=[],cut=v=>{v=String(v||'');return v.length>80?v.slice(0,77)+'…':v;};
+  if((a.text||'')!==(b.text||''))out.push({field:'text',from:a.text||'',to:b.text||'',text:`Текст: «${cut(a.text)}» → «${cut(b.text)}»`});
+  if((a.priority||'Обычный')!==(b.priority||'Обычный'))out.push({field:'priority',from:a.priority||'Обычный',to:b.priority||'Обычный',text:`Приоритет: ${a.priority||'Обычный'} → ${b.priority||'Обычный'}`});
+  if((a.deadline||'')!==(b.deadline||''))out.push({field:'deadline',from:a.deadline||'',to:b.deadline||'',text:`Срок: ${fmtDeadlineValue(a.deadline)} → ${fmtDeadlineValue(b.deadline)}`});
+  if((a.comment||'')!==(b.comment||''))out.push({field:'comment',from:a.comment||'',to:b.comment||'',text:!a.comment?`Комментарий: «${cut(b.comment)}»`:!b.comment?`Комментарий удалён (был «${cut(a.comment)}»)`:`Комментарий: «${cut(a.comment)}» → «${cut(b.comment)}»`});
+  return out;
+}
+function logEvent(t,action,details,extra){
+  let n=now();
+  t.lastActionBy=technologist;
+  t.lastActionShift=shift;
+  const at=eventIso(n.d);
+  t.lastActionAt=at;
+  t.lastActionAtIso=at;
+  db.history.unshift({id:crypto.randomUUID(),taskId:t.id,text:t.text,action,details:details||'',when:at,at,author:technologist,shift:shift,deadline:t.deadline||'',status:t.status||'',comment:t.comment||'',v:17,...(extra||{})});
+  save();
+}
+
+
+function renderNearestTask(){
+  const box=$('nearestTask'),title=$('nearestTaskTitle'),meta=$('nearestTaskMeta');
+  if(!box||!title||!meta)return;
+  const activeWithDeadline=db.tasks.filter(t=>t.status!=='Выполнена'&&t.deadline&& !isNaN(new Date(t.deadline)));
+  const allWithDeadline=db.tasks.filter(t=>t.deadline&& !isNaN(new Date(t.deadline)));
+  box.classList.remove('overdue','urgent','completed-empty');
+  if(activeWithDeadline.length){
+    activeWithDeadline.sort((a,b)=>new Date(a.deadline)-new Date(b.deadline));
+    const t=activeWithDeadline[0],d=new Date(t.deadline),nowDate=new Date();
+    const overdue=d<=nowDate;
+    const dt=d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'});
+    const tm=d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+    title.textContent=t.text||'Без названия';
+    meta.textContent=overdue?`Просрочено · ${dt} · ${tm}`:`${dt} · ${tm} · ${deadlineText(t.deadline)?.text||''}`;
+    if(overdue)box.classList.add('overdue');
+    else if(d-new Date() < 2*60*60*1000) box.classList.add('urgent');
+    box.dataset.taskId=t.id;
+  }else if(allWithDeadline.some(t=>t.status==='Выполнена')){
+    box.classList.add('completed-empty');
+    title.textContent='Все задачи с установленным сроком выполнены';
+    meta.textContent='Новых ближайших задач нет';
+    box.dataset.taskId='';
+  }else{
+    title.textContent='Нет задач с установленным сроком';
+    meta.textContent='Новых ближайших задач нет';
+    box.dataset.taskId='';
+  }
+}
+
+// 1.7.4: «Мои» — задачи, где исполнитель — текущий технолог (кроме выполненных).
+function isMine(t){return !!technologist&&t.assignee===technologist&&t.status!=='Выполнена';}
+// Поиск по названию, комментарию и по тексту истории задачи.
+function taskMatchesSearch(t,q){
+  if(String(t.text||'').toLowerCase().includes(q)||String(t.comment||'').toLowerCase().includes(q)||String(t.assignee||'').toLowerCase().includes(q)||GrassComments.searchText(t).toLowerCase().includes(q))return true;
+  return taskHistoryNewestFirst(t.id).some(h=>String(h.details||'').toLowerCase().includes(q)||String(h.comment||'').toLowerCase().includes(q)||String(h.returnComment||'').toLowerCase().includes(q));
+}
+// 1.7.4: «кочует» — задачу передают из смены в смену, а с ней ничего не происходит.
+// Считаем передачи и возвраты подряд с последнего настоящего действия (создание, восстановление,
+// смена статуса, правка текста/комментария/срока). Больше трёх — метка.
+const NOMAD_LIMIT=3;
+const NOMAD_RESET=new Set(['Создана задача','Задача восстановлена','Изменён статус','Изменена задача']);
+function handoversInRow(t){
+  let n=0;
+  for(const h of taskHistoryNewestFirst(t.id)){
+    if(NOMAD_RESET.has(h.action))break;
+    if(h.action==='Передана по смене'||h.action==='Задача возвращена')n++;
+  }
+  return n;
+}
+function isNomad(t){return t.status!=='Выполнена'&&handoversInRow(t)>NOMAD_LIMIT;}
+// 1.7.4: эскалация — высокий приоритет просрочен дольше порога (общая настройка площадки).
+let escalationHours=Number(grassStorage.getItem('escalationHours')||2);
+if(![1,2,4,8].includes(escalationHours))escalationHours=2;
+function escalatedTasks(at=new Date()){
+  return db.tasks.filter(t=>{
+    if(t.status==='Выполнена'||(t.priority||'Низкий')!=='Высокий'||!t.deadline)return false;
+    const d=new Date(t.deadline);
+    return !isNaN(d)&&at-d>escalationHours*3600000;
+  });
+}
+function renderEscalation(){
+  const el=$('escalationBar');if(!el)return;
+  const list=escalatedTasks();
+  el.hidden=!list.length;
+  if(!list.length){el.innerHTML='';return;}
+  const names=list.slice(0,3).map(t=>`«${esc(t.text)}»`).join(', ')+(list.length>3?` и ещё ${list.length-3}`:'');
+  el.innerHTML=`<b>🔥 Высокий приоритет просрочен больше ${escalationHours} ч:</b> <span>${names}</span><button type="button" data-escalation-show>Показать</button>`;
+}
+$('escalationBar')?.addEventListener('click',()=>{
+  document.querySelector('nav [data-screen="tasks"]')?.click();
+  dashboardFilter='overdue';render();
+});
+// 1.7.5: карточка задачи. В компактном режиме — одна строка, подробности при наведении.
+function taskCardHtml(t){
+  let d=t.deadline?deadlineText(t.deadline,t.deadlineStoppedAt):null;
+  let warning=t.status!=='Выполнена'?(d?.overdue?'warning-overdue':d?.urgent?'warning-urgent':''):'';
+  const files=(t.attachments||[]).length,nomad=isNomad(t),done=t.status==='Выполнена';
+  const quick=readOnly?'':`<div class="quick-actions">${done?'':`<button type="button" data-quick="done" title="Отметить выполненной">✓ Выполнено</button>`}${t.status==='Передать по смене'?'':`<button type="button" data-quick="pass" title="Передать следующей смене">⇄ Передать по смене</button>`}${t.assignee===technologist||!technologist?'':`<button type="button" data-quick="take" title="Назначить исполнителем себя">Взять себе</button>`}</div>`;
+  return `<article class="task ${done?'done':t.status==='Передать по смене'?'pass':t.status==='Не в работе'?'off':''} ${warning}" data-id="${t.id}" role="button" tabindex="0">
+      <div class="check">${done?'☑':'☐'}</div>
+      <div class="task-body"><div class="task-title-row"><h3>${esc(t.text)}</h3>${t.comment?`<p class="task-comment">${esc(t.comment)}${(t.comments||[]).length>1?` <span class="comment-more" title="Все комментарии — в окне задачи">💬 ${t.comments.length}</span>`:''}</p>`:''}</div><div class="task-details"><p><time>${esc(fmtShort(t.date))}</time> · Автор: ${esc(t.author)} · смена ${esc(t.shift)}</p>${restoredLine(t)}${t.assignee?`<p class="assignee-line">Исполнитель: <b>${esc(t.assignee)}</b></p>`:''}<p class="accepted-by">✓ Последнее действие: ${esc(t.lastActionBy||t.author||'')} · смена ${esc(t.lastActionShift||t.shift||'')}</p>${deadlineHtml(t.deadline,t.deadlineStoppedAt)}${(t.regMissed||[]).length?`<p class="reg-missed">⚠ Пропущено повторов регламента: ${t.regMissed.length} — задача не выполнена к следующему повтору</p>`:''}</div>${quick}</div>
+      <div class="task-compact-cols"><span class="c-who">${esc(t.assignee||'—')}</span><span class="c-due ${d?.overdue&&!done?'overdue':d?.urgent&&!done?'urgent':''}">${esc(d?d.text:'без срока')}</span></div>
+      <div class="task-side"><div class="task-meta-right">${taskBadgeHooks.map(f=>f(t)).join('')}${files?`<span class="attach-badge" title="Вложения: ${files}">📎 ${files}</span>`:''}${t.regId?`<span class="reg-badge" title="Создана по регламенту">⟳ регламент</span>`:''}${nomad?`<span class="nomad-badge" title="Передана больше ${NOMAD_LIMIT} раз подряд без изменений. Метка снимется, когда задачу возьмут в работу: сменят статус или допишут комментарий.">⟳ кочует</span>`:''}<span class="priority-icon ${t.priority==='Высокий'?'high':t.priority==='Обычный'?'normal':'low'}" title="Приоритет: ${esc(t.priority||'Низкий')}">${t.priority==='Высокий'?'!!!':t.priority==='Обычный'?'!!':'!'}</span><span class="badge ${t.status==='В работе'?'bwork':done?'bdone':t.status==='Передать по смене'?'bpass':'boff'}">${esc(t.status)}</span></div><div class="task-actions"><button type="button" class="task-delete" data-delete="${t.id}" title="Переместить в архив" aria-label="Переместить задачу в архив"><i class="trash-icon" aria-hidden="true"></i></button><span class="task-more" aria-hidden="true">⋮</span></div></div>
+    </article>`;
+}
+var doneOpen=false;
+// 1.7.5: личные настройки вида — у каждого технолога свои (хранятся в профиле Windows).
+const viewPrefKey=k=>`grass_view|${k}|${technologist||''}`;
+function viewPref(k,def){try{return localStorage.getItem(viewPrefKey(k))??def;}catch(_){return def;}}
+function setViewPref(k,v){try{localStorage.setItem(viewPrefKey(k),v);}catch(_){}}
+var listDensity='normal',handoverWarnMin=60;
+function loadViewPrefs(){
+  listDensity=viewPref('density','normal')==='compact'?'compact':'normal';
+  handoverWarnMin=Number(viewPref('handoverWarn','60'));if(![0,30,60,120].includes(handoverWarnMin))handoverWarnMin=60;
+  document.querySelectorAll('[data-density]').forEach(b=>{const on=b.dataset.density===listDensity;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));});
+  if($('handoverWarn'))$('handoverWarn').value=String(handoverWarnMin);
+}
+function setDensity(v){setViewPref('density',v==='compact'?'compact':'normal');loadViewPrefs();render();}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-density]');if(b)setDensity(b.dataset.density);});
+function render(){
+  let q=$('search').value.trim().toLowerCase();
+  let pf=$('priorityFilter').value;
+  let sf=$('shiftFilter').value;
+  let tf=$('techFilter').value;
+  let a=db.tasks.filter(t=>{
+    let deadline=t.deadline?deadlineText(t.deadline,t.deadlineStoppedAt):null;
+    let overdue=!!deadline?.overdue && t.status!=='Выполнена';
+    let techMatch=!tf||t.author===tf||t.lastActionBy===tf||t.assignee===tf;
+    let dashboardMatch=dashboardFilter==='all'
+      ||(dashboardFilter==='active' && t.status!=='Выполнена')
+      ||(dashboardFilter==='overdue' && overdue)
+      ||(dashboardFilter==='high' && (t.priority||'Низкий')==='Высокий')
+      ||(dashboardFilter==='done' && t.status==='Выполнена')
+      ||(dashboardFilter==='work' && t.status==='В работе')
+      ||(dashboardFilter==='pass' && t.status==='Передать по смене')
+      ||(dashboardFilter==='off' && t.status==='Не в работе')
+      ||(dashboardFilter==='mine' && isMine(t));
+    return dashboardMatch
+      &&(!q||taskMatchesSearch(t,q))
+      &&(!pf||(t.priority||'Низкий')===pf)
+      &&(!sf||t.shift===sf)
+      &&techMatch
+      ;
+  });
+
+  let incoming=db.tasks.filter(t=>t.toShift===shift&&t.status==='Передать по смене');
+  const returnedLine=t=>t.returnComment?`<span class="handover-returned">↩ Вернул ${esc(t.returnedBy||'')}, смена ${esc(t.returnedShift||'')}: ${esc(t.returnComment)}</span>`:'';
+  $('handoverBox').style.display=incoming.length?'block':'none';
+  $('handoverBox').innerHTML=incoming.length
+    ? `<h3>🔔 Вам передали ${incoming.length} ${plural(incoming.length,'задачу','задачи','задач')}</h3>
+       <div class="handover-from">От смены ${esc([...new Set(incoming.map(t=>t.fromShift||t.shift))].join(', '))}</div>
+       ${incoming.map(t=>`<div class="handover-row"><div class="handover-item" data-id="${t.id}"><b>${esc(t.text)}</b><span>${esc(t.author)} · ${esc(fmtShort(t.date))}</span>${returnedLine(t)}</div><div class="handover-actions"><button type="button" class="handover-accept-one" data-accept-one="${t.id}">✓ Принять</button><button type="button" class="handover-return" data-return="${t.id}">↩ Вернуть</button></div></div>`).join('')}
+       <button type="button" id="acceptHandover" class="handover-accept">✓ Принять все</button>`
+    : '';
+  // 1.7.3: передачи, которые ещё никто не принял, видны всем сменам (кроме той, что передала).
+  const pending=db.tasks.filter(t=>t.status==='Передать по смене'&&t.toShift&&t.toShift!==shift&&(t.fromShift||t.shift)!==shift);
+  $('pendingBox').style.display=pending.length?'block':'none';
+  $('pendingBox').innerHTML=pending.length
+    ? `<h3>⚠ Не принятые передачи: ${pending.length}</h3>
+       <div class="handover-from">Их пока не приняла смена-получатель. Можно принять за себя — в истории будет видно, вместо какой смены.</div>
+       ${pending.map(t=>{const w=handoverWait(t);return `<div class="handover-row"><div class="handover-item" data-id="${t.id}"><b>${esc(t.text)}</b><span class="${w.late?'late':''}">Смена ${esc(t.fromShift||t.shift)} → смена ${esc(t.toShift)} · ${esc(w.text)}</span>${returnedLine(t)}</div><div class="handover-actions"><button type="button" class="handover-accept-one" data-accept-instead="${t.id}">✓ Принять за себя</button></div></div>`;}).join('')}`
+    : '';
+
+  // 1.7.5: группы — «Просрочено», «Скоро срок», остальные; выполненные свёрнуты в конце.
+  const groups={over:[],soon:[],rest:[],done:[]};
+  for(const t of a){
+    if(t.status==='Выполнена'){groups.done.push(t);continue;}
+    const d=t.deadline?deadlineText(t.deadline,t.deadlineStoppedAt):null;
+    (d?.overdue?groups.over:d?.urgent?groups.soon:groups.rest).push(t);
+  }
+  const byDeadline=(x,y)=>new Date(x.deadline)-new Date(y.deadline);
+  groups.over.sort(byDeadline);groups.soon.sort(byDeadline);
+  const filtered=dashboardFilter==='done'||!!q||!!pf||!!sf||!!tf;
+  const showDone=doneOpen||filtered||groups.done.length===a.length;
+  const head=(cls,title,list)=>list.length?`<div class="task-group-head ${cls}"><i></i><span>${title}</span><em>${list.length}</em><s></s></div>`:'';
+  const onlyOneGroup=[groups.over,groups.soon,groups.rest,groups.done].filter(x=>x.length).length<=1;
+  $('tasks').classList.toggle('compact',listDensity==='compact');
+  let cardNo=0;
+  const cards=list=>list.map(t=>{const h=taskCardHtml(t);return ++cardNo>40?h.replace('<article class="task ','<article class="task far '):h;}).join('');
+  $('tasks').innerHTML=
+    (onlyOneGroup?'':head('over','Просрочено',groups.over))+cards(groups.over)+
+    (onlyOneGroup?'':head('soon','Скоро срок',groups.soon))+cards(groups.soon)+
+    (onlyOneGroup||(!groups.over.length&&!groups.soon.length)?'':head('rest','Остальные',groups.rest))+cards(groups.rest)+
+    (groups.done.length&&groups.done.length<a.length?`<button type="button" id="doneToggle" class="done-toggle" aria-expanded="${showDone}"><i></i>Выполненные · ${groups.done.length} — ${showDone?'свернуть':'показать'}</button>`:'')+
+    (showDone?cards(groups.done):'');
+
+  let activeCount=db.tasks.filter(t=>t.status!=='Выполнена').length;
+  let overdueCount=db.tasks.filter(t=>{
+    let d=t.deadline?deadlineText(t.deadline,t.deadlineStoppedAt):null;
+    return !!d?.overdue && t.status!=='Выполнена';
+  }).length;
+  let highCount=db.tasks.filter(t=>t.status!=='Выполнена' && (t.priority||'Низкий')==='Высокий').length;
+  let doneCount=db.tasks.filter(t=>t.status==='Выполнена').length;
+  if($('dashActive'))$('dashActive').textContent=activeCount;
+  if($('dashOverdue'))$('dashOverdue').textContent=overdueCount;
+  if($('dashHigh'))$('dashHigh').textContent=highCount;
+  if($('dashDone'))$('dashDone').textContent=doneCount;
+  if($('dashAll'))$('dashAll').textContent=db.tasks.length;
+  if($('dashWork'))$('dashWork').textContent=db.tasks.filter(t=>t.status==='В работе').length;
+  if($('dashPass'))$('dashPass').textContent=db.tasks.filter(t=>t.status==='Передать по смене').length;
+  if($('dashOff'))$('dashOff').textContent=db.tasks.filter(t=>t.status==='Не в работе').length;
+  if($('dashMine'))$('dashMine').textContent=db.tasks.filter(isMine).length;
+  document.querySelectorAll('.dash-card').forEach(c=>{
+    c.classList.toggle('active-filter',c.dataset.dashFilter===dashboardFilter);
+    const n=Number(c.querySelector('strong')?.textContent)||0;
+    c.classList.toggle('zero',n===0);
+    c.classList.toggle('pulse',c.dataset.dashFilter==='overdue'&&n>0);
+  });
+  if($('navTasksBadge')){$('navTasksBadge').hidden=!incoming.length;$('navTasksBadge').textContent=incoming.length;}
+
+  // 1.7.5: совсем пусто (нет задач и передач) — заглушка с кнопкой; задачи есть, но фильтр ничего не нашёл — короткая строка.
+  const nothing=!db.tasks.length&&!pending.length;
+  $('emptyState').hidden=!nothing;
+  $('taskPanel').hidden=nothing;
+  $('empty').style.display=a.length||nothing?'none':'block';
+  renderNearestTask();
+  renderEscalation();
+  renderShiftWarn();
+  (renderHooks||[]).forEach(f=>f());
+}
+
+function previousShiftInfo(at=new Date()){
+  const w=GrassShifts.previousWindow(at);
+  return w&&w.shift?{shift:w.shift,start:w.start,end:w.end,mode:w.mode}:null;
+}
+// 1.7.6: сводка смены считается в stats.js (GrassStats.shiftSummary) — по событиям той смены.
+function eventDate(h,fallbackYear){return GrassStats.eventDate(h,fallbackYear);}
+function summaryStatusOf(h,task){return GrassStats.summaryStatusOf(h,task);}
+function shiftSummaryData(){
+  return GrassStats.shiftSummary(db,previousShiftInfo(new Date()),{lateMinutes:GrassShifts.LATE_HANDOVER_MINUTES,skipTaskId:SUMMARY_TASK_ID});
+}
+function formatSummaryShift(info){
+  if(!info)return 'Нет данных о предыдущей смене';
+  const date=info.start.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'});
+  const tm=GrassShifts.times(info.mode);
+  return `Смена ${info.shift} · ${info.mode} · ${date} · ${tm[0]}–${tm[1]}`;
+}
+function renderShiftSummary(){
+  const dlg=$('shiftSummaryDlg'); if(!dlg)return;
+  const data=shiftSummaryData();
+  $('shiftSummarySubtitle').textContent=data.info?`Предыдущая смена · ${formatSummaryShift(data.info)}`:'Предыдущая смена · данных пока нет';
+  $('shiftSummaryStats').innerHTML=[['done','Выполнено',data.stats.done],['pass','Передано',data.stats.pass],['work','В работе',data.stats.work],['overdue','Просрочено',data.stats.overdue]].map(x=>`<div class="shift-summary-stat ${x[0]}"><strong>${x[2]}</strong><span>${x[1]}</span></div>`).join('');
+  const rank=st=>st==='Передать по смене'?0:st==='В работе'?1:st==='Не в работе'?2:st==='Выполнена'?3:4;
+  const rows=data.rows.slice().sort((a,b)=>rank(a.statusThen)-rank(b.statusThen));
+  $('shiftSummaryTaskCount').textContent=`${rows.length} ${plural(rows.length,'задача','задачи','задач')}`;
+  $('shiftSummaryTasks').innerHTML=rows.length?rows.map(r=>{
+    const cls=r.overdue?'overdue':r.statusThen==='Выполнена'?'done':r.statusThen==='Передать по смене'?'pass':r.statusThen==='Не в работе'?'off':'work';
+    const act=String(r.action||'');
+    const meta=`${esc(r.author)} · ${esc(act.charAt(0).toLowerCase()+act.slice(1))}${r.lastBy&&r.lastBy!==r.author?` · ${esc(r.lastBy)}`:''}${r.assignee?` · исп.: ${esc(r.assignee)}`:''}`;
+    const nowLine=r.nowStatus?`<div class="task-now">сейчас: ${esc(r.nowStatus)}</div>`:'';
+    return `<div class="shift-summary-task ${cls}" data-id="${esc(r.id)}"><span class="dot"></span><div class="task-main"><div class="task-title">${esc(r.text||'Без названия')}</div><div class="task-meta">${meta}</div>${nowLine}</div><span class="status">${esc(r.statusThen||'—')}</span></div>`;
+  }).join(''):`<div class="shift-summary-empty">За предыдущую смену изменений по задачам не найдено.</div>`;
+  (summaryHooks||[]).forEach(f=>f(data.info));
+  $('shiftSummaryNotes').innerHTML=data.notes.length?data.notes.map(n=>`<div><b>${esc(n.task)}:</b> ${esc(n.comment)}</div>`).join(''):`<span>Отдельных комментариев по задачам нет.</span>`;
+}
+function openShiftSummary(){renderShiftSummary();$('shiftSummaryDlg')?.showModal();}
+$('shiftSummaryBtn')?.addEventListener('click',openShiftSummary);
+$('shiftSummaryClose')?.addEventListener('click',()=>$('shiftSummaryDlg')?.close());
+// 1.7.4: «Ознакомлен» — отметка в истории (один раз за смену на технолога). Это не действие по задаче:
+// событие с taskId '__summary__' не попадает ни в историю задач, ни в сводку, ни в статистику.
+const SUMMARY_TASK_ID='__summary__';
+function summaryAckDone(info){
+  const key=info?.start?.toISOString?.()||'';
+  return (db.history||[]).some(h=>h.taskId===SUMMARY_TASK_ID&&h.author===technologist&&h.summaryFor===key);
+}
+function acknowledgeSummary(){
+  const info=previousShiftInfo(new Date());
+  if(!info||readOnly||!technologist||summaryAckDone(info))return;
+  const at=eventIso(new Date());
+  db.history.unshift({id:crypto.randomUUID(),taskId:SUMMARY_TASK_ID,text:'Сводка смены',action:'Ознакомлен со сводкой',
+    details:`Сводка смены ${info.shift} за ${info.start.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'})}`,when:at,at,
+    author:technologist,shift,deadline:'',status:'',comment:'',v:17,summaryShift:info.shift,summaryFor:info.start.toISOString()});
+  save();
+}
+$('shiftSummaryOk')?.addEventListener('click',()=>{acknowledgeSummary();$('shiftSummaryDlg')?.close();});
+// Сводка открывается сама при открытии программы (первом после начала смены 08:30/20:30):
+// один раз за смену для каждого технолога, только если смена выбрана по графику и в сводке что-то есть.
+function summarySeenKey(){const w=GrassShifts.windowAt(new Date());return w&&w.shift?`grass_summary_seen|${currentSite()}|${w.start.toISOString()}|${technologist}`:null;}
+// 1.7.6: записи журнала прошлой смены тоже повод показать сводку.
+function journalCountIn(info){return GrassJournal.inWindow(GrassJournal.fold(taskHistoryNewestFirst(GrassJournal.TASK_ID)),info).filter(e=>!e.deleted).length;}
+function maybeAutoSummary(){
+  if(readOnly||dbLoadError||!technologist||bindPending())return;
+  const a=activeShiftAt(new Date());if(!a||a!==shift)return;
+  if(document.querySelector('dialog[open]'))return;
+  const key=summarySeenKey();if(!key)return;
+  let seen=null;try{seen=localStorage.getItem(key);}catch(_){}
+  if(seen)return;
+  const info=previousShiftInfo(new Date());
+  if(!info||summaryAckDone(info)||(!shiftSummaryData().rows.length&&!journalCountIn(info)))return;
+  try{localStorage.setItem(key,'1');}catch(_){}
+  openShiftSummary();
+}
+$('shiftSummaryAll')?.addEventListener('click',()=>{$('shiftSummaryDlg')?.close();document.querySelector('[data-screen="tasks"]')?.click();});
+
+function renderShiftInfo(){
+  const d=new Date();
+  const cur=GrassShifts.windowAt(d), next=GrassShifts.nextWindow(d);
+  const curEl=$('currentShiftInfo'),nxt=$('nextShiftInfo'),nxtTime=$('nextShiftTimeInfo');
+  if(curEl)curEl.textContent=GrassShifts.label(cur);
+  if(nxt)nxt.textContent=next.shift?`Следующая смена: ${next.shift}`:'—';
+  if(nxtTime)nxtTime.textContent=next.shift?`${next.start.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'})} · ${next.start.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}`:'';
+  // 1.7.5: полоска прошедшей части смены и предупреждение «Через N мин передача».
+  if(cur&&cur.start&&cur.end&&$('shiftProgress')){const p=Math.max(0,Math.min(1,(d-cur.start)/(cur.end-cur.start)));$('shiftProgress').style.width=(p*100).toFixed(1)+'%';}
+  const left=next&&next.start?Math.ceil((next.start-d)/60000):null;
+  const soon=handoverWarnMin>0&&left!=null&&left>0&&left<=handoverWarnMin;
+  $('shiftTile')?.classList.toggle('handover-soon',soon);
+  const el=$('handoverSoon');
+  if(el){el.hidden=!soon;if(soon)el.textContent=`Через ${left<60?left+' мин':Math.floor(left/60)+' ч'+(left%60?' '+(left%60)+' мин':'')} передача: пора готовить задачи`;}
+}
+
+
+// ---------- 1.7: исполнитель, вложения, компактные поля ----------
+let dlgTaskId=null,dlgAttachments=[];
+function fmtBytes(n){n=Number(n)||0;if(n<1024)return n+' Б';if(n<1048576)return (n/1024).toFixed(0)+' КБ';return (n/1048576).toFixed(1)+' МБ'}
+function toast(text){let el=$('grass-toast');if(!el){el=document.createElement('div');el.id='grass-toast';document.body.appendChild(el);}el.textContent=text;el.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>{el.hidden=true},4000);}
+function autoGrow(el){
+  if(!el)return;
+  el.style.height='auto';
+  const max=parseFloat(getComputedStyle(el).maxHeight)||200;
+  const need=el.scrollHeight+2;
+  el.style.height=Math.min(need,max)+'px';
+  el.style.overflowY=need>max?'auto':'hidden';
+}
+['text','comment'].forEach(id=>$(id)?.addEventListener('input',()=>autoGrow($(id))));
+// Исполнитель: только из актуального списка технологов; удалённого выбрать нельзя,
+// но на старой задаче он остаётся (помечен «нет в списке»).
+function fillAssignee(current){
+  const sel=$('assignee'); if(!sel)return;
+  sel.replaceChildren();
+  const add=(value,label,disabled)=>{const o=document.createElement('option');o.value=value;o.textContent=label;if(disabled)o.disabled=true;sel.appendChild(o);};
+  add('','Не назначен');
+  technologists.forEach(n=>add(n,n));
+  if(current&&!technologists.includes(current))add(current,`${current} (нет в списке)`,true);
+  sel.value=current||'';
+}
+const attachApi=()=>window.grassAttachments||null;
+// 1.7.12: опасные типы (exe, bat, js, макросы…) не открываются из программы — у них ещё «Показать в папке». Список даёт main.js.
+const ATTACH_BLOCKED=(()=>{try{return new Set(window.grassAttachments?.blockedExt?.()||[]);}catch(_){return new Set();}})();
+const attachBlocked=name=>{const m=/\.([^.\/]+)$/.exec(String(name||'').toLowerCase().replace(/[.\s]+$/,''));return !!m&&ATTACH_BLOCKED.has(m[1]);};
+function attachmentItemsHtml(list,{editable=false}={}){
+  return (list||[]).map((a,i)=>`<div class="attach-item${attachBlocked(a.name)?' blocked':''}" data-stored="${esc(a.stored)}"><span class="attach-name" title="${esc(a.name)}">📄 ${esc(a.name)}</span><span class="attach-size">${fmtBytes(a.size)}</span>${attachApi()?`<button type="button" data-attach-open="${esc(a.stored)}">Открыть</button>`:''}${attachApi()&&attachBlocked(a.name)?`<button type="button" data-attach-reveal="${esc(a.stored)}" title="Файл может быть опасен — откройте папку и проверьте его антивирусом">Показать в папке</button>`:''}${editable?`<button type="button" class="attach-remove" data-attach-remove="${i}" title="Убрать из задачи">✕</button>`:''}</div>`).join('');
+}
+async function markMissingAttachments(container){
+  const api=attachApi(); if(!api||!container)return;
+  const items=[...container.querySelectorAll('.attach-item[data-stored]')]; if(!items.length)return;
+  try{const ex=await api.exists(items.map(x=>x.dataset.stored));items.forEach(x=>{if(ex[x.dataset.stored]===false){x.classList.add('missing');x.title='Файл не найден в папке данных';}});}catch(_){}
+}
+function renderAttachList(){
+  const box=$('attachList'); if(!box)return;
+  box.innerHTML=attachmentItemsHtml(dlgAttachments,{editable:true});
+  markMissingAttachments(box);
+  if($('attachAdd'))$('attachAdd').hidden=!attachApi();
+}
+async function openAttachment(stored){
+  const api=attachApi();
+  if(!api){toast('Открыть вложение можно в приложении на компьютере.');return;}
+  try{const r=await api.open(stored);if(!r?.ok)toast(r?.error||'Не удалось открыть файл.');}catch(e){toast('Не удалось открыть файл.');}
+}
+document.addEventListener('click',e=>{
+  const o=e.target.closest('[data-attach-open]');
+  if(o){e.preventDefault();e.stopPropagation();openAttachment(o.dataset.attachOpen);return;}
+  const rv=e.target.closest('[data-attach-reveal]');
+  if(rv){e.preventDefault();e.stopPropagation();attachApi()?.reveal(rv.dataset.attachReveal).then(r=>{if(!r?.ok)toast(r?.error||'Файл не найден.');}).catch(()=>toast('Не удалось открыть папку.'));return;}
+  const r=e.target.closest('[data-attach-remove]');
+  if(r){e.preventDefault();e.stopPropagation();dlgAttachments.splice(Number(r.dataset.attachRemove),1);renderAttachList();}
+},true);
+$('attachAdd')?.addEventListener('click',async()=>{
+  const api=attachApi(); if(!api||!dlgTaskId)return;
+  const msg=$('attachMsg'); if(msg)msg.textContent='';
+  $('attachAdd').disabled=true;
+  try{
+    const r=await api.add(dlgTaskId);
+    if(!r?.ok){if(msg)msg.textContent=r?.error||'Не удалось прикрепить файлы.';return;}
+    (r.items||[]).forEach(a=>dlgAttachments.push({...a,addedBy:technologist,addedShift:shift}));
+    if(r.skipped?.length&&msg)msg.textContent='Не прикреплено: '+r.skipped.map(x=>`${x.name} (${x.reason})`).join(', ');
+    renderAttachList();
+  }catch(e){if(msg)msg.textContent='Не удалось прикрепить файлы.';}
+  finally{$('attachAdd').disabled=false;}
+});
+// Фильтр «Все технологи» — из общего списка технологов (+ авторы/исполнители старых задач).
+function renderTechFilter(){
+  const sel=$('techFilter'); if(!sel)return;
+  const keep=sel.value;
+  const names=new Set(technologists);
+  [...(db.tasks||[])].forEach(t=>{[t.author,t.assignee,t.lastActionBy].forEach(n=>{if(n&&n!=='Система')names.add(n)})});
+  sel.replaceChildren();
+  const add=(v,l)=>{const o=document.createElement('option');o.value=v;o.textContent=l;sel.appendChild(o);};
+  add('','Все технологи');
+  [...names].forEach(n=>add(n,n));
+  sel.value=names.has(keep)?keep:'';
+}
+
+let dlgBaseRev=null,dlgOrigAtt=new Set(),dlgOrig={};
+// Поля диалога: что видел технолог при открытии. Если задачу изменили другие, нетронутые поля обновим, а введённое — оставим.
+const DLG_FIELDS={text:'text',status:'status',comment:'comment',deadline:'deadline'};
+// 1.7.6: поле комментария в окне — для нового комментария (прежние видны лентой выше), поэтому открывается пустым.
+function dlgValues(t){return {text:t?.text||'',status:t?.status||'В работе',comment:'',deadline:t?.deadline||'',priority:t?.priority||'Обычный',assignee:t?.assignee||''};}
+function setPriorityUi(p){priority=p;document.querySelectorAll('.priorities button').forEach(b=>b.classList.toggle('selected',b.dataset.p===priority));}
+// 1.7.6: лента комментариев задачи (comments.js): старые сверху, новый добавляется, а не затирает.
+function commentFeedOf(t){return t?GrassComments.feedOf(t,taskHistoryNewestFirst(t.id)):[];}
+function renderCommentFeed(t){
+  const box=$('commentFeed');if(!box)return;
+  const feed=commentFeedOf(t);
+  box.hidden=!feed.length;
+  $('commentLabel').textContent=feed.length?'Новый комментарий':'Комментарий';
+  $('comment').placeholder=feed.length?'Добавить комментарий — прежние останутся в ленте...':'Добавить комментарий (необязательно)...';
+  box.innerHTML=feed.length?`<div class="comment-feed-head">Комментарии (${feed.length})</div>`+feed.map(c=>{
+    const d=c.at?new Date(c.at):null,when=d&&!isNaN(d)?d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+    return `<div class="comment-item"><div class="comment-text">${esc(c.text)}</div><div class="comment-meta">${esc([c.author,c.shift?'смена '+c.shift:'',when].filter(Boolean).join(' · '))}</div></div>`;
+  }).join(''):'';
+  box.scrollTop=box.scrollHeight;
+}
+const dlgLoadHooks=[];   // 1.7.6: модули дополняют окно задачи (например, «Из шаблона»)
+function openDlg(id=null){loadDlg(id);$('dlg').showModal();autoGrow($('text'));autoGrow($('comment'));}
+function loadDlg(id=null){
+  editId=id;
+  let t=id&&db.tasks.find(x=>x.id===id);
+  dlgBaseRev=t?(savedState?.revs.get(String(t.id))??null):null;
+  dlgOrigAtt=new Set((t?.attachments||[]).map(a=>a.id));
+  dlgOrig=dlgValues(t);
+  showDlgNotice('');
+  dlgTaskId=t?t.id:crypto.randomUUID();
+  dlgAttachments=JSON.parse(JSON.stringify(t?.attachments||[]));
+  if($('attachMsg'))$('attachMsg').textContent='';
+  fillAssignee(t?.assignee||'');
+  renderAttachList();
+  if($('dlgSubmit'))$('dlgSubmit').innerHTML=t?'✓ &nbsp; Сохранить изменения':'✓ &nbsp; Создать задачу';
+  $('dlgTitle').textContent=t?'Редактировать задачу':'Добавить задачу';
+  dlgLoadHooks.forEach(f=>f(t));
+  $('text').value=t?.text||'';
+  $('status').value=t?.status||'В работе';
+  $('comment').value='';
+  renderCommentFeed(t);
+  $('deadline').value=t?.deadline||'';
+  priority=t?.priority||'Обычный';
+  document.querySelectorAll('.priorities button').forEach(b=>b.classList.toggle('selected',b.dataset.p===priority));
+  $('autoShift').textContent=`Смена ${shift}`;
+  $('autoTech').textContent=technologist;
+  let n=now();$('autoDate').textContent=n.ds+' · '+n.weekday;$('autoTime').textContent=n.ts;
+  syncStatusButtons();
+}
+// 1.7.5: статус в окне задачи — кнопками (список статусов остаётся и с ним синхронизирован).
+function syncStatusButtons(){document.querySelectorAll('#statusButtons [data-status]').forEach(b=>{const on=b.dataset.status===$('status').value;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));});}
+$('statusButtons')?.addEventListener('click',e=>{const b=e.target.closest('[data-status]');if(!b)return;$('status').value=b.dataset.status;syncStatusButtons();});
+$('status').addEventListener('change',syncStatusButtons);
+
+$('addBtn').onclick=()=>openDlg();
+$('emptyAdd')?.addEventListener('click',()=>openDlg());
+$('emptySummary')?.addEventListener('click',()=>openShiftSummary());
+// 1.7.5: «Выполнено», «Передать по смене», «Взять себе» без открытия окна. Идут через ту же форму и то же
+// сохранение, что и окно задачи: та же история, тот же получатель передачи, та же проверка конфликтов.
+function quickAction(id,kind){
+  if(readOnly||!id)return;
+  if(SHARED_MODE)pullRemoteChanges();
+  if(!db.tasks.some(x=>x.id===id)){toast('Эту задачу уже перенесли в архив или удалили.');render();return;}
+  loadDlg(id);
+  if(kind==='done')$('status').value='Выполнена';
+  if(kind==='pass')$('status').value='Передать по смене';
+  if(kind==='take'){fillAssignee(technologist);}
+  syncStatusButtons();
+  inBatch(()=>submitTaskForm());
+  if(!$('dlgNotice').hidden&&!$('dlg').open)$('dlg').showModal();   // кто-то успел поменять задачу — показываем окно с объяснением
+}
+$('close').onclick=()=>$('dlg').close();
+$('cancel').onclick=()=>$('dlg').close();
+
+$('form').onsubmit=async e=>{e.preventDefault();if(!await confirmPastDeadline())return;inBatch(()=>submitTaskForm());};
+// 1.7.8: срок в прошлом — переспрашиваем (задача сразу станет просроченной). Не мешаем, если срок не меняли
+// или задачу сразу закрывают «Выполненной».
+function confirmPastDeadline(){
+  const v=$('deadline').value;
+  if(readOnly||!v||$('status').value==='Выполнена')return true;
+  if(editId&&dlgOrig&&dlgOrig.deadline===v)return true;
+  const d=new Date(v);
+  if(isNaN(d)||d>new Date())return true;
+  return askDialog({title:'Срок уже прошёл',text:`Указан срок ${fmtDeadlineValue(v)} — это раньше, чем сейчас. Задача сразу станет просроченной.\n\nСохранить с этим сроком?`,ok:'Сохранить',cancel:'Исправить срок'});
+}
+function submitTaskForm(){
+  if(readOnly)return;
+  // Общая база: перед сохранением подтягиваем свежие данные и проверяем, не изменили ли задачу, пока был открыт диалог.
+  if(SHARED_MODE&&editId){
+    pullRemoteChanges();
+    const cur=db.tasks.find(x=>x.id===editId);
+    if(!cur){$('dlg').close();toast('Эту задачу уже перенесли в архив или удалили — изменения не сохранены.');render();return;}
+    const rev=savedState.revs.get(String(editId))??null;
+    if(dlgBaseRev!==null&&rev!==dlgBaseRev){
+      dlgBaseRev=rev;
+      // Вложения, которые добавил другой технолог, не теряем.
+      for(const a of cur.attachments||[])if(!dlgOrigAtt.has(a.id)&&!dlgAttachments.some(x=>x.id===a.id))dlgAttachments.push(a);
+      dlgOrigAtt=new Set((cur.attachments||[]).map(a=>a.id));
+      renderAttachList();
+      const fresh=dlgValues(cur);
+      for(const [k,el] of Object.entries(DLG_FIELDS))if($(el).value===dlgOrig[k])$(el).value=fresh[k];
+      if(priority===dlgOrig.priority)setPriorityUi(fresh.priority);
+      if($('assignee')&&$('assignee').value===dlgOrig.assignee)fillAssignee(fresh.assignee);
+      dlgOrig=fresh;
+      showDlgNotice(`Пока вы редактировали, задачу изменил ${whoChanged(cur)}. Сейчас в базе: статус «${cur.status}»${cur.comment?`, комментарий «${cur.comment}»`:''}${cur.assignee?`, исполнитель ${cur.assignee}`:''}. Поля, которые вы меняли, остались как вы ввели, остальные обновлены — проверьте и нажмите «Сохранить» ещё раз.`);
+      return;
+    }
+  }
+  let n=now(),old=editId&&db.tasks.find(x=>x.id===editId),status=$('status').value;
+  // Кому передаём: если задача уже «Передать по смене» и статус не меняли — получатель прежний.
+  let fromShift=null,toShift=null;
+  if(status==='Передать по смене'){
+    if(old&&old.status==='Передать по смене'&&old.toShift){toShift=old.toShift;fromShift=old.fromShift||holderShiftOf(old);}
+    else{fromShift=GrassShifts.senderShift(shift,old?holderShiftOf(old):shift,n.d);toShift=GrassShifts.recipient(fromShift,n.d);}
+  }
+  let task={
+    ...(old||{}),
+    id:editId||dlgTaskId||crypto.randomUUID(),
+    text:$('text').value.trim(),
+    status,
+    priority,
+    ...(()=>{   // 1.7.6: новый комментарий — в ленту; пустое поле — комментарий прежний
+      const feed=GrassComments.append(old||{},$('comment').value,{author:technologist,shift,at:n.d.toISOString()},old?taskHistoryNewestFirst(old.id):[]);
+      return feed?{comment:feed[feed.length-1].text,comments:feed}:{comment:old?.comment||''};
+    })(),
+    deadline:$('deadline').value||'',
+    deadlineStoppedAt:status==='Выполнена' ? (old?.status==='Выполнена' ? (old?.deadlineStoppedAt||n.d.toISOString()) : n.d.toISOString()) : '',
+    author:old?.author||technologist,
+    shift:old?.shift||shift,
+    date:old?.date||n.iso,
+    toShift,
+    fromShift,
+    holderShift:old?holderShiftOf(old):shift,
+    lastActionBy:technologist,
+    lastActionShift:shift,
+    lastActionAt:n.iso,
+    lastActionAtIso:n.iso,
+    createdAt:old?.createdAt||n.d.toISOString(),
+    assignee:($('assignee')?.value)||'',
+    attachments:dlgAttachments.slice()
+  };
+  if(!task.text)return;
+
+  const prevAssignee=old?.assignee||'';
+  const oldAtt=new Set((old?.attachments||[]).map(a=>a.id)),newAtt=new Set(task.attachments.map(a=>a.id));
+  const addedAtt=task.attachments.filter(a=>!oldAtt.has(a.id)),removedAtt=(old?.attachments||[]).filter(a=>!newAtt.has(a.id));
+  if(editId){
+    let previous=db.tasks.find(x=>x.id===editId);
+    db.tasks[db.tasks.findIndex(x=>x.id===editId)]=task;
+    if(previous.status!==task.status){
+      if(task.status==='Передать по смене'){
+        logEvent(task,'Передана по смене',`Смена ${task.fromShift} → смена ${task.toShift}`,{fromShift:task.fromShift,toShift:task.toShift});
+      }else{
+        logEvent(task,'Изменён статус',`${previous.status} → ${task.status}`);
+      }
+    }
+    // 1.7.3: каждое изменённое поле — со старым и новым значением (и вместе со сменой статуса тоже).
+    const changes=fieldChanges(previous,task);
+    if(changes.length)logEvent(task,'Изменена задача',changes.map(c=>c.text).join('; '),{changes:changes.map(({field,from,to})=>({field,from,to}))});
+    if(prevAssignee!==task.assignee)logEvent(task,'Назначен исполнитель',`${prevAssignee||'не назначен'} → ${task.assignee||'не назначен'}`,{assignee:task.assignee});
+  }else{
+    db.tasks.unshift(task);
+    logEvent(task,'Создана задача',`Создана технологом ${task.author}, смена ${task.shift}${task.assignee?`, исполнитель ${task.assignee}`:''}`,task.assignee?{assignee:task.assignee}:undefined);
+    if(task.status==='Передать по смене'){
+      logEvent(task,'Передана по смене',`Смена ${task.fromShift} → смена ${task.toShift}`,{fromShift:task.fromShift,toShift:task.toShift});
+    }
+  }
+  if(addedAtt.length)logEvent(task,'Добавлено вложение',addedAtt.map(a=>a.name).join(', '),{files:addedAtt.map(a=>a.name)});
+  if(removedAtt.length)logEvent(task,'Удалено вложение',removedAtt.map(a=>a.name).join(', '),{files:removedAtt.map(a=>a.name)});
+  taskSavedHooks.forEach(f=>f(task,editId?old:null));
+
+  save();$('dlg').close();render();renderHistory();renderStats();
+}
+
+document.querySelectorAll('.priorities button').forEach(b=>b.onclick=()=>{
+  priority=b.dataset.p;
+  document.querySelectorAll('.priorities button').forEach(x=>x.classList.toggle('selected',x===b));
+});
+
+const defaultTechnologists=['Носиков А.Ю.','Егоров Е.В.','Покусаев Е.С.','Рычков С.С.','Никулин О.В.','Степуро О.В.'];
+let technologists=JSON.parse(grassStorage.getItem('technologists')||'null');
+if(!Array.isArray(technologists)||!technologists.length){technologists=[...defaultTechnologists];grassStorage.setItem('technologists',JSON.stringify(technologists));}
+function saveTechnologists(){grassStorage.setItem('technologists',JSON.stringify(technologists));}
+// Список общий: перед правкой берём свежий из базы, чтобы не затереть того, кого только что добавил другой.
+function reloadTechnologistsFromDb(){try{const list=JSON.parse(grassStorage.getItem('technologists')||'null');if(Array.isArray(list)&&list.length)technologists=list;}catch(_){}}
+function renderTechnologistMenu(){
+  const menu=$('techMenu'); if(!menu)return; menu.innerHTML='';
+  if(!technologists.includes(technologist)){technologist=technologists[0]||'';grassStorage.setItem('technologist',technologist);}
+  $('techLabel').textContent=technologist||'Выберите технолога';
+  if(techBinding.enabled&&techBinding.bound){
+    // закреплён за учёткой: чужое имя выбрать нельзя
+    const b=document.createElement('button');b.type='button';b.textContent=technologist;b.className='active';b.onclick=()=>$('techMenu').classList.remove('open');
+    const note=document.createElement('div');note.className='tech-bound-note';note.textContent=`Закреплён за учёткой ${techBinding.osUser||''}. Поменять может только администратор.`;
+    menu.append(b,note);renderTechFilter();return;
+  }
+  technologists.forEach(name=>{
+    let b=document.createElement('button'); b.type='button'; b.textContent=name;
+    if(name===technologist)b.classList.add('active');
+    b.onclick=()=>{technologist=name;grassStorage.setItem('technologist',technologist);$('techLabel').textContent=technologist;document.querySelectorAll('#techMenu button').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('techMenu').classList.remove('open');renderSettingsTechnologists();loadViewPrefs();render();};
+    menu.appendChild(b);
+  });
+  renderTechFilter();
+}
+$('techBtn').onclick=()=>$('techMenu').classList.toggle('open');
+renderTechnologistMenu();
+function refreshTechBinding(){try{const b=grassStorage.bindState?.();if(b)techBinding=b;}catch(_){}}
+function renderSettingsTechnologists(){
+  const list=$('technologistsList'); if(!list)return; list.innerHTML='';
+  technologists.forEach(name=>{
+    const row=document.createElement('div'); row.className='technologist-item';
+    const current=name===technologist?'<span class="technologist-current">текущий</span>':'';
+    const acc=techBinding.enabled?(techBinding.taken||{})[name]:'';
+    row.innerHTML=`<span class="technologist-name">${esc(name)}${current}${acc?`<span class="technologist-account" title="Закреплён за учёткой Windows">учётка: ${esc(acc)}</span>`:''}</span>`;
+    if(acc){
+      // 1.7.12: перепривязка — только администратор (проверяет main.js)
+      const un=document.createElement('button');un.type='button';un.className='technologist-unbind';un.textContent='Отвязать';
+      un.onclick=async()=>{
+        if(!await askDialog({title:`Отвязать «${name}» от учётки ${acc}?`,text:'При следующем запуске под этой учёткой программа снова спросит «Кто вы?».',ok:'Отвязать'}))return;
+        const r=grassStorage.bindRelease?.(acc)||{ok:false,error:'Нет связи с программой'};
+        if(!r.ok){askDialog({title:'Не отвязано',text:r.error||'',cancel:null});return;}
+        refreshTechBinding();renderSettingsTechnologists();
+      };
+      row.appendChild(un);
+    }
+    const del=document.createElement('button'); del.type='button'; del.className='technologist-delete'; del.textContent='Удалить';
+    del.disabled=technologists.length<=1;
+    del.onclick=async()=>{
+      reloadTechnologistsFromDb();
+      if(technologists.length<=1)return;
+      if(!await askDialog({title:`Удалить технолога «${name}»?`,text:'Он пропадёт из списка пользователей. История и старые задачи этого сотрудника сохранятся.',ok:'Удалить',danger:true}))return;
+      reloadTechnologistsFromDb();
+      const r=grassStorage.setItem('technologists',JSON.stringify(technologists.filter(x=>x!==name)));
+      if(r&&r.ok===false){askDialog({title:'Технолог не удалён',text:r.error||'',cancel:null});return;}   // 1.7.12: удалять может только администратор
+      technologists=technologists.filter(x=>x!==name);refreshTechBinding();
+      if(technologist===name){technologist=technologists[0]||'';grassStorage.setItem('technologist',technologist);}
+      renderTechnologistMenu(); renderSettingsTechnologists(); render(); renderHistory(); renderStats(); renderArchive();
+    };
+    row.appendChild(del); list.appendChild(row);
+  });
+}
+const techManagement=document.querySelector('.tech-management');
+const techAddRow=$('techAddRow');
+const toggleTechAdd=$('toggleTechAdd');
+let techAddCollapsed=grassStorage.getItem('grass_tech_add_collapsed')==='1';
+function applyTechAddCollapse(){
+  if(!techManagement||!toggleTechAdd)return;
+  techManagement.classList.toggle('tech-add-collapsed',techAddCollapsed);
+  toggleTechAdd.textContent=techAddCollapsed?'⌄':'⌃';
+  toggleTechAdd.setAttribute('aria-expanded',String(!techAddCollapsed));
+  toggleTechAdd.setAttribute('aria-label',techAddCollapsed?'Развернуть список технологов':'Свернуть список технологов');
+}
+toggleTechAdd?.addEventListener('click',()=>{
+  techAddCollapsed=!techAddCollapsed;
+  grassStorage.setItem('grass_tech_add_collapsed',techAddCollapsed?'1':'0');
+  applyTechAddCollapse();
+});
+applyTechAddCollapse();
+$('addTechnologist')?.addEventListener('click',()=>{
+  const input=$('newTechnologist'); if(!input)return;
+  const name=input.value.trim().replace(/\s+/g,' ');
+  if(!name){input.focus();return;}
+  reloadTechnologistsFromDb();
+  if(technologists.some(x=>x.toLowerCase()===name.toLowerCase())){askDialog({title:'Такой технолог уже есть',text:`«${name}» уже есть в списке.`,cancel:null}).then(()=>input.focus());return;}
+  technologists.push(name); saveTechnologists(); input.value=''; renderTechnologistMenu(); renderSettingsTechnologists();
+});
+$('newTechnologist')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('addTechnologist')?.click();}});
+renderSettingsTechnologists();$('search').oninput=render;
+setInterval(render,30000);
+
+// 1.7.4: свои окна вместо системных confirm/alert. Возвращает true, если нажали основную кнопку.
+let askResolve=null;
+function askDialog({title,text='',ok='OK',cancel='Отмена',danger=false}={}){
+  const d=$('askDlg');
+  if(askResolve){askResolve(false);askResolve=null;}
+  $('askTitle').textContent=title||'';$('askText').textContent=text;
+  $('askOk').textContent=ok;$('askOk').classList.toggle('danger',!!danger);
+  $('askCancel').textContent=cancel||'';$('askCancel').hidden=cancel==null;
+  return new Promise(res=>{askResolve=res;try{if(d.open)d.close();d.showModal();}catch(_){d.setAttribute('open','');}});
+}
+function closeAsk(v){const r=askResolve;askResolve=null;try{$('askDlg').close();}catch(_){}if(r)r(v);}
+$('askOk').onclick=()=>closeAsk(true);
+$('askCancel').onclick=()=>closeAsk(false);
+$('askDlg').addEventListener('cancel',e=>{e.preventDefault();closeAsk(false);});
+
+let deleteId=null;
+function openDeleteDialog(id){
+  deleteId=id;
+  const d=$('deleteDlg');
+  if(d && typeof d.showModal==='function') d.showModal();
+  else if(d) d.setAttribute('open','');
+}
+function closeDeleteDialog(){
+  const d=$('deleteDlg');
+  if(d?.open) d.close(); else if(d) d.removeAttribute('open');
+  deleteId=null;
+}
+
+$('deleteCancel').onclick=()=>closeDeleteDialog();
+$('deleteConfirm').onclick=()=>{ if(deleteId!==null){ const id=deleteId; closeDeleteDialog(); archiveTask(id); } };
+
+function autoArchiveCompleted(){
+  if(!autoArchiveEnabled)return false;
+  const cutoff=Date.now()-autoArchiveDays*86400000;
+  let changed=false;
+  const keep=[];
+  for(const task of db.tasks){
+    if(task.status==='Выполнена'){
+      // 1.7.1: срок считается от момента, когда задача стала «Выполненной», в том числе при создании.
+      const completedAt=completedAtOf(task)||parseStoredDate(task.lastActionAt);
+      if(completedAt && completedAt.getTime()<=cutoff){
+        const n=now();
+        const dutyShift=activeShiftAt(n.d)||task.shift||'';   // 1.7.8: смена, которая работала в момент архивации, а не смена создания
+        task.archivedAt=n.iso;
+        task.archivedBy='Автоматически';
+        task.archivedShift=dutyShift;
+        task.archivedFromStatus=task.status;
+        task.lastActionBy='Система';
+        task.lastActionShift=dutyShift;
+        task.lastActionAt=n.iso;
+        db.archive.unshift(task);
+        db.history.unshift({id:crypto.randomUUID(),taskId:task.id,text:task.text,action:'Задача автоматически перемещена в архив',details:`Автоматическая архивация через ${autoArchiveDays} дней после выполнения`,...(()=>{const at=eventIso(n.d);return {when:at,at};})(),author:'Система',shift:dutyShift,comment:task.comment||'',v:17,deadline:task.deadline||'',status:task.status||''});
+        changed=true;
+        continue;
+      }
+    }
+    keep.push(task);
+  }
+  if(changed){db.tasks=keep;syncStatsArchive();conflictQuiet=true;try{save();}finally{conflictQuiet=false;}}
+  return changed;
+}
+
+function archiveTask(id){
+  let idx=db.tasks.findIndex(x=>String(x.id)===String(id));
+  if(idx<0)return;
+  let task=db.tasks[idx];
+  let n=now();
+  task.archivedAt=n.iso;
+  task.archivedBy=technologist;
+  task.archivedShift=shift;
+  task.archivedFromStatus=task.status;
+  task.lastActionBy=technologist;
+  task.lastActionShift=shift;
+  task.lastActionAt=n.iso;
+  db.tasks.splice(idx,1);
+  db.archive.unshift(task);
+  db.history.unshift({id:crypto.randomUUID(),taskId:task.id,text:task.text,action:'Задача перемещена в архив',details:`Удалил: ${technologist}, смена ${shift}`,...(()=>{const at=eventIso(n.d);return {when:at,at};})(),author:technologist,shift:shift,comment:task.comment||'',v:17,deadline:task.deadline||'',status:task.status||''});
+  syncStatsArchive();
+  save();
+  render();renderHistory();renderStats();renderArchive();syncArchiveClearState();
+}
+
+$('tasks').onclick=e=>{
+  // 1.7.12: кнопка «в архив» без встроенного onclick (его запрещает защита окна, CSP)
+  const del=e.target.closest('.task-delete[data-delete]');
+  if(del){e.preventDefault();e.stopPropagation();openDeleteDialog(del.getAttribute('data-delete'));return;}
+  if(e.target.closest('#doneToggle')){doneOpen=!doneOpen;render();return;}
+  const q=e.target.closest('[data-quick]');
+  if(q){e.stopPropagation();quickAction(q.closest('.task')?.dataset.id,q.dataset.quick);return;}
+  let card=e.target.closest('.task');
+  if(card)openDlg(card.dataset.id);
+};
+
+$('tasks').onkeydown=e=>{
+  if(e.target.closest('button'))return;
+  if(e.key==='Enter'||e.key===' '){
+    let task=e.target.closest('.task');
+    if(task){e.preventDefault();openDlg(task.dataset.id);}
+  }
+};
+
+
+function renderArchive(){
+  let items=db.archive||[];
+  const shown=items.slice(0,archiveLimit);
+  $('archive').innerHTML=items.length ? `<div class="archive-grid">${shown.map(t=>{
+    let histCount=taskHistoryNewestFirst(t.id).length;
+    return `<article class="archive-card" data-archive-id="${t.id}">
+      <h3>${esc(t.text)}</h3>
+      <p>${esc(fmtShort(t.date))} · Автор: ${esc(t.author||'')} · смена ${esc(t.shift||'')}</p>${restoredLine(t)}
+      <p>Удалена: ${esc(fmtShort(t.archivedAt))} · ${esc(t.archivedBy||'')} · смена ${esc(t.archivedShift||'')}</p>${t.assignee?`<p>👤 Исполнитель: ${esc(t.assignee)}</p>`:''}${(t.attachments||[]).length?`<div class="archive-attach">${attachmentItemsHtml(t.attachments)}</div>`:''}
+      <p>Статус до удаления: <b>${esc(t.archivedFromStatus||t.status||'')}</b></p>
+      <div class="archive-actions"><button type="button" class="restore" data-restore="${t.id}">↻ Восстановить</button></div>
+      <details class="archive-history" data-hist-task="${esc(t.id)}"><summary>Показать полную историю (${histCount})</summary></details>
+    </article>`;
+  }).join('')}</div>${moreButtonHtml('archive',shown.length,items.length)}` : '<div class="empty">Архив пока пуст</div>';
+}
+
+let restoreId=null;
+function openRestore(id){
+  let task=(db.archive||[]).find(x=>String(x.id)===String(id)); if(!task)return;
+  restoreId=id;
+  $('restoreTaskName').textContent=task.text;
+  let hasDeadline=!!task.deadline;
+  $('restoreDeadlineWrap').style.display=hasDeadline?'block':'none';
+  $('restoreDeadline').required=hasDeadline;
+  $('restoreDeadline').value='';
+  $('restoreHint').textContent=hasDeadline?'У задачи был дедлайн. При восстановлении задайте новый срок.':'У задачи не было дедлайна — она будет восстановлена без срока.';
+  $('restoreDlg').showModal();
+}
+$('restoreClose').onclick=()=>$('restoreDlg').close();
+$('restoreCancel').onclick=()=>$('restoreDlg').close();
+$('restoreForm').onsubmit=e=>{e.preventDefault();inBatch(()=>submitRestoreForm());};
+function submitRestoreForm(){
+  if(!restoreId)return;
+  if(SHARED_MODE){pullRemoteChanges();if(!(db.archive||[]).some(x=>String(x.id)===String(restoreId))){$('restoreDlg').close();restoreId=null;toast('Эту задачу уже восстановил или удалил другой технолог.');return;}}
+  let idx=(db.archive||[]).findIndex(x=>String(x.id)===String(restoreId)); if(idx<0)return;
+  let task=db.archive[idx],n=now(),newDeadline=task.deadline?$('restoreDeadline').value:'';
+  if(task.deadline&&!newDeadline)return;
+  task.status='В работе';
+  task.deadline=newDeadline;
+  task.deadlineStoppedAt='';
+  task.toShift=null;
+  // 1.7.4: дата создания остаётся прежней, восстановление видно отдельной строкой.
+  task.restoredAt=n.iso;
+  task.restoredBy=technologist;
+  task.restoredShift=shift;
+  task.holderShift=shift;
+  task.lastActionBy=technologist;
+  task.lastActionShift=shift;
+  task.lastActionAt=n.iso;
+  delete task.archivedAt; delete task.archivedBy; delete task.archivedShift; delete task.archivedFromStatus;
+  db.archive.splice(idx,1);
+  db.tasks.unshift(task);
+  logEvent(task,'Задача восстановлена',`Восстановил: ${technologist}, смена ${shift}. Новый рабочий цикл начат ${n.short}.${newDeadline?` Новый срок: ${fmtDeadlineValue(newDeadline)}.`:''}`);
+  save();$('restoreDlg').close();restoreId=null;render();renderHistory();renderStats();renderArchive();syncArchiveClearState();
+}
+
+$('archive').onclick=e=>{
+  let r=e.target.closest('[data-restore]');
+  if(r)openRestore(r.dataset.restore);
+};
+
+// ---------- 1.7.3: приёмка по одной, возврат, «Принять все», непринятые передачи ----------
+// Когда смена-получатель задачи начинает (или начала) работать после передачи.
+function handoverWait(t){
+  const at=parseStoredDate(t.lastActionAt)||new Date();
+  let w=GrassShifts.windowAt(at);
+  if(w.shift!==t.toShift)w=GrassShifts.nextWindowOf(t.toShift,at);
+  if(!w)return {text:`ждёт смену ${t.toShift}`,late:false};
+  const n=new Date(),sameDay=w.start.toDateString()===n.toDateString();
+  const when=w.start.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})+(sameDay?'':' '+w.start.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}));
+  return w.start<=n?{text:`не принято сменой ${t.toShift} с ${when}`,late:true}:{text:`ждёт смену ${t.toShift} (с ${when})`,late:false};
+}
+// Принять задачи. onlyMine — только переданные моей смене («Принять все» и «Принять»); иначе — за другую смену.
+function acceptTasks(ids,onlyMine){
+  if(readOnly)return;
+  inBatch(()=>{
+    pullRemoteChanges();
+    const taken=[];
+    for(const id of ids){
+      const t=db.tasks.find(x=>String(x.id)===String(id));
+      if(!t||t.status!=='Передать по смене'||(onlyMine&&t.toShift!==shift)){const x=t||findTaskAny(id)?.t;if(x)taken.push(x);continue;}
+      const fromShift=t.fromShift||t.shift,fromAuthor=t.lastActionBy||t.author;
+      const instead=t.toShift&&t.toShift!==shift?t.toShift:null;
+      t.status='В работе';
+      t.acceptedBy=technologist;
+      t.acceptedShift=shift;
+      t.holderShift=shift;
+      t.acceptedAt=now().iso;
+      t.toShift=null;
+      delete t.returnComment;delete t.returnedBy;delete t.returnedShift;delete t.returnedAt;
+      logEvent(t,'Задача принята',`Принял: ${technologist}, смена ${shift}${instead?` вместо смены ${instead}`:''}. Передал: ${fromAuthor}, смена ${fromShift}.`,instead?{fromShift,toShift:shift,insteadOf:instead}:{fromShift,toShift:shift});
+    }
+    if(taken.length)toast('Уже принято другими: '+taken.map(t=>`«${t.text}» — ${t.status==='Передать по смене'?'передана смене '+t.toShift:(t.acceptedBy||t.lastActionBy||'другой технолог')}`).join('; ')+'.');
+    save();render();renderHistory();renderStats();
+  });
+}
+// Вернуть задачу смене, которая её передала, с комментарием.
+let returnId=null;
+function openReturn(id){
+  const t=db.tasks.find(x=>String(x.id)===String(id));if(!t)return;
+  returnId=t.id;
+  $('returnTaskName').textContent=`«${t.text}» вернётся смене ${t.fromShift||t.shift}.`;
+  $('returnComment').value='';
+  $('returnDlg').showModal();
+}
+function returnTask(id,comment){
+  if(readOnly)return;
+  inBatch(()=>{
+    pullRemoteChanges();
+    const t=db.tasks.find(x=>String(x.id)===String(id));
+    if(!t||t.status!=='Передать по смене'||t.toShift!==shift){toast('Эту задачу уже приняли или вернули.');render();return;}
+    const back=t.fromShift||t.shift;
+    t.toShift=back;
+    t.fromShift=shift;
+    t.returnComment=comment;t.returnedBy=technologist;t.returnedShift=shift;t.returnedAt=now().iso;
+    logEvent(t,'Задача возвращена',`Вернул: ${technologist}, смена ${shift} → смена ${back}. Причина: ${comment}`,{fromShift:shift,toShift:back,returnComment:comment});
+    save();render();renderHistory();renderStats();
+  });
+}
+$('returnClose').onclick=()=>$('returnDlg').close();
+$('returnCancel').onclick=()=>$('returnDlg').close();
+$('returnForm').onsubmit=e=>{
+  e.preventDefault();
+  const comment=$('returnComment').value.trim();
+  if(!comment||!returnId)return;
+  const id=returnId;returnId=null;$('returnDlg').close();
+  returnTask(id,comment);
+};
+function handoverClick(e){
+  const one=e.target.closest('[data-accept-one]');if(one){acceptTasks([one.dataset.acceptOne],true);return;}
+  const inst=e.target.closest('[data-accept-instead]');if(inst){acceptTasks([inst.dataset.acceptInstead],false);return;}
+  const ret=e.target.closest('[data-return]');if(ret){openReturn(ret.dataset.return);return;}
+  if(e.target.closest('#acceptHandover')){acceptTasks(db.tasks.filter(t=>t.toShift===shift&&t.status==='Передать по смене').map(t=>t.id),true);return;}
+  const item=e.target.closest('.handover-item');
+  if(item)openDlg(item.dataset.id);
+}
+$('handoverBox').onclick=handoverClick;
+$('pendingBox').onclick=handoverClick;
+
+$('shiftBtn').onclick=()=>$('shiftMenu').classList.toggle('open');
+Object.keys(shifts).forEach(s=>{
+  let b=document.createElement('button');
+  b.textContent=`Смена ${s}`;
+  if(s===shift)b.classList.add('active');
+  b.onclick=()=>{
+    $('shiftMenu').classList.remove('open');
+    setCurrentShift(s);
+  };
+  $('shiftMenu').appendChild(b);
+});
+$('shiftLabel').textContent='Смена '+shift;
+
+// Закрываем выпадающие списки при клике в любом месте страницы вне самих списков
+document.addEventListener('click',e=>{
+  if(e.target.closest('.select-wrap'))return;
+  $('techMenu')?.classList.remove('open');
+  $('shiftMenu')?.classList.remove('open');
+});
+
+// 1.7.4: История и Архив показывают по 50 карточек (кнопка «Ещё»), а полная история задачи
+// собирается только при раскрытии. События берутся из индекса taskId → события, а не перебором всей истории.
+const PAGE_SIZE=50;
+let historyLimit=PAGE_SIZE,archiveLimit=PAGE_SIZE,historyQuery='';
+let historyGroupsCache=null;
+function historyGroups(){
+  const h=db.history||[];
+  const sig=h.length+'|'+(h[0]?.id||'')+'|'+(h[h.length-1]?.id||'');
+  if(historyGroupsCache&&historyGroupsCache.list===h&&historyGroupsCache.sig===sig)return historyGroupsCache.map;
+  const map=new Map();
+  for(const x of h){const id=String(x.taskId);let g=map.get(id);if(!g){g=[];map.set(id,g);}g.push(x);}
+  historyGroupsCache={list:h,sig,map};
+  return map;
+}
+function taskHistoryNewestFirst(taskId){return historyGroups().get(String(taskId))||[];}
+function historyMiniHtml(hist,withDeadline){
+  return hist.map(x=>`<div class="history-mini"><b>${esc(x.action)}</b> — ${esc(fmtShort(x.when))} · <span${x.osUser?` class="hist-osuser" title="Учётка Windows: ${esc(x.osUser)}"`:''}>${esc(x.author||'')}</span> · смена ${esc(x.shift||'')}<br>${esc(x.details||'')}${withDeadline?eventDeadlineHtml(x):''}</div>`).join('');
+}
+function moreButtonHtml(kind,shown,total){
+  return total>shown?`<div class="list-more"><button type="button" class="list-more-btn" data-more="${kind}">Ещё ${Math.min(PAGE_SIZE,total-shown)} из ${total-shown}</button></div>`:'';
+}
+function renderHistory(){
+  let q=($('historySearch')?.value||'').trim().toLowerCase();
+  if(q!==historyQuery){historyQuery=q;historyLimit=PAGE_SIZE;}
+  let archivedIds=new Set([...(db.archive||[]).map(t=>String(t.id)),...(db.clearedArchiveIds||[]).map(String)]);
+  let groups=[];
+  for(const [id,hist] of historyGroups()){
+    if(archivedIds.has(id)||id.startsWith('__'))continue;   // служебные: «Ознакомлен», журнал смены
+    if(q&&!String(hist[0].text||'').toLowerCase().includes(q))continue;
+    groups.push(hist);
+  }
+  const shown=groups.slice(0,historyLimit);
+  $('history').innerHTML=groups.length
+    ? `<div class="archive-grid">${shown.map(hist=>{
+        let latest=hist[0];
+        return `<article class="archive-card history-task-card">
+          <h3>${esc(latest.text)}</h3>
+          <p><b>Последнее изменение:</b> ${esc(latest.action)}</p>
+          <p>${esc(fmtShort(latest.when))} · ${esc(latest.author||'')} · смена ${esc(latest.shift||'')}</p>
+          <p>${esc(latest.details||'')}</p>
+          ${historyCardDeadlineHtml(latest)}
+          <details class="archive-history" data-hist-task="${esc(latest.taskId)}" data-hist-deadline="1"><summary>Показать полную историю (${hist.length})</summary></details>
+        </article>`;
+      }).join('')}</div>${moreButtonHtml('history',shown.length,groups.length)}`
+    : '<div class="empty">История пока пуста</div>';
+}
+// Полная история подставляется при первом раскрытии карточки.
+function fillHistoryDetails(e){
+  const d=e.target;
+  if(!(d instanceof HTMLDetailsElement)||!d.open||d.dataset.filled||!d.dataset.histTask)return;
+  d.dataset.filled='1';
+  d.insertAdjacentHTML('beforeend',historyMiniHtml(taskHistoryNewestFirst(d.dataset.histTask),!!d.dataset.histDeadline));
+}
+['history','archive'].forEach(id=>$(id)?.addEventListener('toggle',fillHistoryDetails,true));
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-more]');if(!b)return;
+  if(b.dataset.more==='history'){historyLimit+=PAGE_SIZE;renderHistory();}
+  if(b.dataset.more==='archive'){archiveLimit+=PAGE_SIZE;renderArchive();}
+});
+
+let statsPeriod='7d';
+// 1.7.7: бригада (п. 47) и запоминание выбора (п. 51) — личные настройки, у каждого технолога свои.
+let statsBrigade='';
+let statsPrefsOwner=null;
+const STATS_BRIGADES=['A','B','C','D'];
+function loadStatsPrefs(){
+  const p=viewPref('statsPeriod','7d');statsPeriod=GrassStats.PERIODS.some(x=>x[0]===p)?p:'7d';
+  const b=viewPref('statsBrigade','');statsBrigade=STATS_BRIGADES.includes(b)?b:'';
+  statsTech=viewPref('statsTech','')||'';
+  statsTechSort={key:'created',dir:-1};
+  try{const s=JSON.parse(viewPref('statsTechSort','null'));if(s&&TECH_STAT_COLS.some(c=>c[0]===s.key)&&(s.dir===1||s.dir===-1))statsTechSort={key:s.key,dir:s.dir};}catch(_){}
+  statsPrefsOwner=technologist;
+}
+function saveStatsPrefs(){
+  setViewPref('statsPeriod',statsPeriod);setViewPref('statsBrigade',statsBrigade);
+  setViewPref('statsTech',statsTech);setViewPref('statsTechSort',JSON.stringify(statsTechSort));
+}
+function statsRange(period=statsPeriod){return GrassStats.periodRange(db,period,new Date(),{shifts:GrassShifts,shift});}
+function statsOpts(){const when=GrassStats.brigadeWhen(GrassShifts,statsBrigade);return when?{when}:null;}
+// Какие задачи входят в цифры «Всего / Выполнено / В работе / В архиве»: технолог и бригада.
+function statsTaskMatch(){
+  const tech=statsTechMatch(),br=statsBrigadeMatch();
+  if(!tech&&!br)return null;
+  return t=>(!tech||tech(t))&&(!br||br(t));
+}
+function statsTechMatch(){const tech=statsTech;return tech?(t=>t.author===tech||t.assignee===tech):null;}
+function statsBrigadeMatch(){const br=statsBrigade,now=new Date();return br?(t=>GrassStats.brigadeOfTask(t,GrassShifts,now)===br):null;}
+
+// 1.7.6: расчёты статистики — в stats.js (GrassStats), с юнит-тестами. Здесь только обёртки с данными окна.
+function parseStoredDate(value){return GrassStats.parseStoredDate(value);}
+function statsTaskPool(){return GrassStats.taskPool(db);}
+function statsStartDate(period,nowDate){return GrassStats.startDate(db,period,nowDate);}
+// События задачи по порядку времени. Индекс строится один раз и обновляется, когда меняется история.
+let historyIndexCache=null;
+function historyIndex(){
+  const h=db.history||[];
+  const sig=h.length+'|'+(h[0]?.id||'')+'|'+(h[h.length-1]?.id||'');
+  if(historyIndexCache&&historyIndexCache.list===h&&historyIndexCache.sig===sig)return historyIndexCache.map;
+  historyIndexCache={list:h,sig,map:GrassStats.buildIndex(h)};
+  return historyIndexCache.map;
+}
+function taskEvents(taskId){return GrassStats.taskEvents(historyIndex(),taskId);}
+function eventStatusOf(h){return GrassStats.eventStatusOf(h);}
+function completionEvents(taskId){return GrassStats.completionEvents(historyIndex(),taskId);}
+function completedAtOf(task){return GrassStats.completedAtOf(historyIndex(),task);}
+function statsDataRange(start,end,opts){return GrassStats.dailyCounts(db,historyIndex(),start,end,new Date(),opts);}
+function statsData(period){const r=statsRange(period);return statsDataRange(r.start,r.end,statsOpts());}
+function statsTaskStateAt(task,cutoff){return GrassStats.taskStateAt(historyIndex(),task,cutoff);}
+function statsSnapshotAt(cutoff,match){return GrassStats.snapshotAt(db,historyIndex(),cutoff,match);}
+const realPerson=GrassStats.realPerson;
+function techActivity(start,end,opts){return GrassStats.techActivity(db,historyIndex(),start,end,new Date(),opts);}
+function techTable(start,end,opts){return GrassStats.techTable(db,historyIndex(),technologists,start,end,new Date(),opts);}
+let statsTech='';
+let statsTechSort={key:'created',dir:-1};
+const TECH_STAT_COLS=[['name','Технолог'],['created','Создал'],['completed','Выполнил'],['passed','Передал'],['accepted','Принял'],['returned','Вернул'],['assigned','В работе как исполнитель'],['overdue','Просрочено']];
+function sortTechTable(list){
+  const {key,dir}=statsTechSort;
+  return list.slice().sort((a,b)=>{
+    const v=key==='name'?a.name.localeCompare(b.name,'ru'):(a[key]-b[key]);
+    return (v*dir)||a.name.localeCompare(b.name,'ru');
+  });
+}
+function statsTechOptions(){return GrassStats.techOptions(db,technologists);}
+function renderTechTable(start,end,caption,opts){
+  const list=sortTechTable(techTable(start,end,opts));
+  const total=GrassStats.techTotals(list);
+  const arrow=k=>statsTechSort.key===k?(statsTechSort.dir<0?' ↓':' ↑'):'';
+  const colName=k=>(TECH_STAT_COLS.find(c=>c[0]===k)||[k,k])[1];
+  const cell=(r,k)=>k==='name'?`<td data-col="name">${esc(r.name)}</td>`:`<td data-col="${k}"${statsListAttr(`${r.name} · ${colName(k)}`,r.ids&&r.ids[k])}>${r[k]}</td>`;
+  return `<section class="stats-dynamics stats-techs">
+      <div class="stats-dynamics-head"><div class="stats-dynamics-title"><div><h2>По технологам</h2><p>${esc(capitalize(caption))} · ${esc(SITE_LABELS[currentSite()]||'')} · нажми на столбец, чтобы отсортировать, на цифру — чтобы увидеть задачи</p></div></div></div>
+      <div class="tech-table-wrap"><table class="tech-table" id="techTable"><thead><tr>${TECH_STAT_COLS.map(([k,l])=>`<th><button type="button" data-tech-sort="${k}">${esc(l)}${arrow(k)}</button></th>`).join('')}</tr></thead>
+      <tbody>${list.map(r=>`<tr data-tech-row="${esc(r.name)}" class="${r.name===statsTech?'selected':''}">${TECH_STAT_COLS.map(([k])=>cell(r,k)).join('')}</tr>`).join('')}</tbody>
+      <tfoot><tr class="tech-total" id="techTotal">${TECH_STAT_COLS.map(([k])=>cell(total,k)).join('')}</tr></tfoot></table></div>
+    </section>`;
+}
+function capitalize(s){s=String(s||'');return s.charAt(0).toUpperCase()+s.slice(1);}
+// 1.7.7 (п. 45): за каждой цифрой — список задач. Цифра помечается data-stats-list, список открывается окном.
+let statsLists={};
+function statsListAttr(title,ids){
+  const list=[...new Set((ids||[]).map(String))];
+  if(!list.length)return '';
+  const k='l'+Object.keys(statsLists).length;
+  statsLists[k]={title,ids:list};
+  return ` data-stats-list="${k}" tabindex="0" role="button"`;
+}
+function statsTaskWhere(id){
+  const a=db.tasks.find(t=>String(t.id)===id);if(a)return {task:a,where:'active'};
+  const b=(db.archive||[]).find(t=>String(t.id)===id);if(b)return {task:b,where:'archive'};
+  const c=(db.statsArchive||[]).find(t=>String(t.id)===id);return c?{task:c,where:'gone'}:null;
+}
+function openStatsList(key){
+  const l=statsLists[key];if(!l)return;
+  const items=l.ids.map(id=>({id,...(statsTaskWhere(id)||{task:null,where:'gone'})}));
+  $('statsListTitle').textContent=l.title;
+  $('statsListHint').textContent=`${items.length} ${plural(items.length,'задача','задачи','задач')} · нажми на задачу, чтобы открыть`;
+  $('statsListItems').innerHTML=items.map(({id,task,where})=>{
+    const st=where==='active'?(task.status||''):where==='archive'?'В архиве':'Архив очищен — открыть нельзя';
+    const meta=[st,task&&task.assignee?'исполнитель '+task.assignee:'',task&&task.author?'автор '+task.author:'',task&&task.date?fmtShort(task.date):''].filter(Boolean).join(' · ');
+    return `<button type="button" class="stats-list-item ${where}" data-stats-open="${esc(id)}" ${where==='gone'?'disabled':''}><b>${esc(task?task.text:'Задача удалена')}</b><span>${esc(meta)}</span></button>`;
+  }).join('');
+  $('statsListDlg').showModal();
+}
+// Склонение по числу: 1 минута, 2 минуты, 5 минут, 11 минут, 21 минута (1.7.9 — во всех надписях).
+function plural(n,one,few,many){const m10=n%10,m100=n%100;return m10===1&&m100!==11?one:m10>=2&&m10<=4&&(m100<12||m100>14)?few:many;}
+function openStatsTask(id){
+  const x=statsTaskWhere(id);if(!x||x.where==='gone')return;
+  $('statsListDlg').close();
+  if(x.where==='active'){openDlg(x.task.id);return;}
+  const idx=(db.archive||[]).indexOf(x.task);
+  if(idx>=archiveLimit)archiveLimit=Math.ceil((idx+1)/PAGE_SIZE)*PAGE_SIZE;
+  document.querySelector('nav [data-screen="archive"]').click();
+  const card=document.querySelector(`[data-archive-id="${CSS.escape(String(x.task.id))}"]`);
+  if(card){card.scrollIntoView({block:'center'});card.classList.add('flash');setTimeout(()=>card.classList.remove('flash'),2500);}
+}
+$('statsListClose')?.addEventListener('click',()=>$('statsListDlg').close());
+$('statsListItems')?.addEventListener('click',e=>{const b=e.target.closest('[data-stats-open]');if(b&&!b.disabled)openStatsTask(b.dataset.statsOpen);});
+$('statView')?.addEventListener('click',e=>{const el=e.target.closest('[data-stats-list]');if(el){e.stopPropagation();openStatsList(el.dataset.statsList);}});
+$('statView')?.addEventListener('keydown',e=>{const el=e.target.closest('[data-stats-list]');if(el&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openStatsList(el.dataset.statsList);}});
+// 1.7.7 (п. 50): подсказка над столбиком графика — дата и точная цифра.
+function showStatsTip(col){
+  const tip=$('statsTip'),wrap=col.closest('.stats-chart-wrap');if(!tip||!wrap)return;
+  tip.innerHTML=col.dataset.tip;tip.hidden=false;
+  const w=wrap.getBoundingClientRect(),b=col.getBoundingClientRect(),bar=col.querySelector('.stats-bar')?.getBoundingClientRect()||b;
+  const left=Math.min(Math.max(8,b.left-w.left+b.width/2-tip.offsetWidth/2),w.width-tip.offsetWidth-8);
+  tip.style.left=left+'px';tip.style.top=Math.max(4,bar.top-w.top-tip.offsetHeight-8)+'px';
+}
+$('statView')?.addEventListener('mouseover',e=>{const c=e.target.closest('[data-tip]');if(c)showStatsTip(c);});
+$('statView')?.addEventListener('mouseout',e=>{const c=e.target.closest('[data-tip]');if(c&&!c.contains(e.relatedTarget)){const t=$('statsTip');if(t)t.hidden=true;}});
+// 1.7.6 (п. 28): скорость и сроки — среднее время до выполнения, сколько смен прошла задача, доля в срок, по приоритетам.
+function fmtHours(h){
+  if(h==null)return '—';
+  if(h<1)return Math.max(1,Math.round(h*60))+' мин';
+  if(h<48)return (Math.round(h*10)/10).toString().replace('.',',')+' ч';
+  const d=Math.floor(h/24),r=Math.round(h-d*24);return d+' дн'+(r?' '+r+' ч':'');
+}
+// 1.7.7: при фильтре по бригаде выполнение и создание считаются по времени (в её смены), «открыто сейчас» — задачи бригады.
+function qualityData(start,end,match,when,openMatch){return GrassStats.qualityStats(db,historyIndex(),start,end,new Date(),GrassShifts,match,when,openMatch);}
+function renderQualityBlock(start,end,match,when,openMatch){
+  const q=qualityData(start,end,match,when,openMatch);
+  const pct=v=>v==null?'—':v+'%';
+  const num=v=>v==null?'—':String(v).replace('.',',');
+  const smen=n=>{const m10=n%10,m100=n%100;return n+' '+(m10===1&&m100!==11?'смена':m10>=2&&m10<=4&&(m100<12||m100>14)?'смены':'смен');};
+  const card=(cls,label,val,sub,list)=>`<div class="quality-card ${cls}"><span>${label}</span><strong${list||''}>${val}</strong><small>${sub}</small></div>`;
+  return `<section class="stats-quality" id="statsQuality">
+    <div class="stats-quality-head"><h2>Скорость и сроки</h2><p>По задачам, выполненным за выбранный период</p></div>
+    <div class="quality-grid">
+      ${card('speed','Среднее время до выполнения',fmtHours(q.avgHours),`медиана ${fmtHours(q.medianHours)} · выполнено ${q.completed}`,statsListAttr('Выполнено за период',q.ids.completed))}
+      ${card('shifts','Сколько смен прошла задача',num(q.avgShifts),q.maxShifts?`дольше всех: ${esc(q.maxShifts.text)} — ${smen(q.maxShifts.count)}`:'в среднем, включая смену создания',statsListAttr('Выполнено за период',q.ids.completed))}
+      ${card('ontime','Выполнено в срок',pct(q.onTimePct),q.withDeadline?`${q.onTime} из ${q.withDeadline} со сроком`:'нет выполненных задач со сроком',statsListAttr('Выполнено в срок',q.ids.onTime))}
+      ${card('open','Открыто сейчас',String(q.open),q.openLongest?`дольше всех висит: ${esc(q.openLongest.text)} — ${smen(q.openLongest.count)}`:'незакрытых задач нет',statsListAttr('Открыто сейчас',q.ids.open))}
+    </div>
+    <table class="quality-table"><thead><tr><th>Приоритет</th><th>Создано</th><th>Выполнено</th><th>Среднее время</th><th>Смен в среднем</th><th>В срок</th><th>Открыто</th><th>Просрочено сейчас</th></tr></thead>
+    <tbody>${q.byPriority.map(r=>{const L=(what,ids)=>statsListAttr(`${r.priority} приоритет · ${what}`,ids);
+      return `<tr data-prio="${esc(r.priority)}"><td>${esc(r.priority)}</td><td${L('создано',r.ids.created)}>${r.created}</td><td${L('выполнено',r.ids.completed)}>${r.completed}</td><td>${fmtHours(r.avgHours)}</td><td>${num(r.avgShifts)}</td><td${L('в срок',r.ids.onTime)}>${pct(r.onTimePct)}</td><td${L('открыто',r.ids.open)}>${r.open}</td><td${L('просрочено сейчас',r.ids.overdueNow)}>${r.overdueNow}</td></tr>`;}).join('')}</tbody></table>
+  </section>`;
+}
+function renderStats(){
+  // Дашборды хранят исторический результат отдельно от текущего архива.
+  // Поэтому очистка архива не обнуляет накопленную статистику.
+  // 1.7.1: фильтр «Технолог» — итоги и графики по одному человеку.
+  // 1.7.7: быстрые периоды, бригада, клик по цифре — список задач; выбор запоминается у каждого технолога.
+  if(statsPrefsOwner!==technologist)loadStatsPrefs();
+  if(statsTech&&!statsTechOptions().includes(statsTech))statsTech='';
+  statsLists={};
+  const techMatch=statsTaskMatch();
+  const statsTasks=statsTaskPool().filter(t=>!techMatch||techMatch(t));
+  const total=statsTasks.length;
+  const doneTasks=statsTasks.filter(x=>x.status==='Выполнена');
+  const done=doneTasks.length;
+  const workTasks=db.tasks.filter(x=>x.status==='В работе'&&(!techMatch||techMatch(x)));
+  const work=workTasks.length;
+  const archTasks=db.archive.filter(x=>!techMatch||techMatch(x));
+  const archived=archTasks.length;
+  const range=statsRange(),opts=statsOpts(),when=opts&&opts.when;
+  const start=range.start,n=range.end;
+  const rows=statsTech?techActivity(start,n,opts).rowsOf(statsTech):statsDataRange(start,n,opts);
+  const periodTotal={created:rows.reduce((a,r)=>a+r.created,0),completed:rows.reduce((a,r)=>a+r.completed,0),overdue:rows.reduce((a,r)=>a+r.overdue,0)};
+  const periodIds=f=>rows.flatMap(r=>r.ids[f]);
+  const prevEnd=range.prevEnd||new Date(start.getTime()-1);
+  const prevStart=range.prevStart||prevEnd;
+  const prevRows=statsTech?techActivity(prevStart,prevEnd,opts).rowsOf(statsTech):statsDataRange(prevStart,prevEnd,opts);
+  const prevTotal={created:prevRows.reduce((a,r)=>a+r.created,0),completed:prevRows.reduce((a,r)=>a+r.completed,0),overdue:prevRows.reduce((a,r)=>a+r.overdue,0)};
+  const pctChange=(cur,prev)=>prev===0?(cur>0?100:0):Math.round(((cur-prev)/prev)*100);
+  const currentSnapshot={total,done,work,archived};
+  const prevSnapshot=statsSnapshotAt(prevEnd,techMatch);
+  const overdueDelta=pctChange(periodTotal.overdue,prevTotal.overdue);
+  const completionRate=periodTotal.created?Math.round(periodTotal.completed/periodTotal.created*100):0;
+  const max=Math.max(1,...rows.flatMap(r=>[r.created,r.completed,r.overdue]));
+  const yStep=Math.max(1,Math.ceil(max/4));
+  const yMax=yStep*4;
+  const chartWidth=Math.max(620,rows.length*79);
+  const deltaText=(cur,prev,positiveWhenUp=true)=>{
+    const d=pctChange(cur,prev);
+    if(d===0)return 'без изменений';
+    return `${d>0?'↗':'↘'} ${Math.abs(d)}%`;
+  };
+  const ids=l=>l.map(t=>t.id);
+  const statCards=[
+    {type:'total',label:'Всего',value:total,delta:pctChange(currentSnapshot.total,prevSnapshot.total),icon:'document',list:statsListAttr('Всего задач',ids(statsTasks))},
+    {type:'done',label:'Выполнено',value:done,delta:pctChange(currentSnapshot.done,prevSnapshot.done),icon:'check',list:statsListAttr('Выполнено',ids(doneTasks))},
+    {type:'work',label:'В работе',value:work,delta:pctChange(currentSnapshot.work,prevSnapshot.work),icon:'clock',list:statsListAttr('В работе',ids(workTasks))},
+    {type:'archive',label:'В архиве',value:archived,delta:pctChange(currentSnapshot.archived,prevSnapshot.archived),icon:'archive',list:statsListAttr('В архиве',ids(archTasks))}
+  ];
+  const caption=range.caption+(statsBrigade?' · бригада '+statsBrigade:'');
+  const fmtD=d=>d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const LABEL={created:'Создано',completed:'Выполнено',overdue:'Просрочено'};
+  $('statView').innerHTML=`
+    <div class="stats-kpi-grid">
+      ${statCards.map(c=>`<div class="stats-kpi-card ${c.type}">
+        <div class="stats-kpi-icon">${c.icon==='document'?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5M8 12h8M8 16h6"/></svg>':c.icon==='check'?'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m7.5 12 3 3 6-6"/></svg>':c.icon==='clock'?'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v13H4zM3 7l2-3h14l2 3M9 11h6"/></svg>'}</div>
+        <div class="stats-kpi-content"><div class="stats-kpi-top"><span>${c.label}</span><b class="stats-kpi-delta ${c.delta<0?'negative':''}">${c.delta===0?'→ 0%':`${c.delta>0?'↗':'↘'} ${Math.abs(c.delta)}%`}</b></div><strong${c.list}>${c.value}</strong><small>${esc(caption)}</small></div>
+      </div>`).join('')}
+    </div>
+    <section class="stats-dynamics">
+      <div class="stats-dynamics-head">
+        <div class="stats-dynamics-title">
+          <div class="stats-dynamics-icon" aria-hidden="true"><span class="dyn-bar dyn-bar-1"></span><span class="dyn-bar dyn-bar-2"></span><span class="dyn-bar dyn-bar-3"></span></div>
+          <div><h2>Динамика задач</h2><p>Количество созданных, выполненных и просроченных задач по дням</p></div>
+        </div>
+        <div class="stats-period">
+          ${GrassStats.PERIODS.map(([k,v])=>`<button type="button" class="${statsPeriod===k?'active':''}" data-stats-period="${k}"${k==='shift'?` title="Смена ${esc(shift)}: текущая или последняя"`:''}>${v}</button>`).join('')}
+        </div>
+      </div>
+      <div class="stats-filter-row">
+        <div class="stats-brigades" role="group" aria-label="Бригада"><span>Бригада</span>${['',...STATS_BRIGADES].map(b=>`<button type="button" class="${statsBrigade===b?'active':''}" data-stats-brigade="${b}">${b||'Все'}</button>`).join('')}</div>
+        <select id="statsTechFilter" class="stats-tech-filter" aria-label="Технолог"><option value="">Все технологи</option>${statsTechOptions().map(nm=>`<option value="${esc(nm)}" ${nm===statsTech?'selected':''}>${esc(nm)}</option>`).join('')}</select>
+        <span class="stats-range-note">${esc(capitalize(range.caption))}: ${esc(fmtD(start))}${fmtD(start)!==fmtD(n)?' — '+esc(fmtD(n)):''}</span>
+      </div>
+      <div class="stats-dynamics-body">
+        <div class="stats-chart-wrap">
+          <div class="stats-chart-scroll">
+            <div class="stats-chart" style="width:${chartWidth}px">
+              <div class="stats-ygrid">
+                <span><b>${yMax}</b></span><span><b>${yStep*3}</b></span><span><b>${yStep*2}</b></span><span><b>${yStep}</b></span><span><b>0</b></span>
+              </div>
+              <div class="stats-bars">
+                ${rows.map(r=>{
+                  const vals=[['created',r.created],['completed',r.completed],['overdue',r.overdue]];
+                  const day=fmtD(r.date);
+                  return `<div class="stats-day" data-date="${day}">${vals.map(([type,val])=>`<div class="stats-bar-col" data-tip="${esc(`<b>${day}</b>${LABEL[type]}: ${val}`)}"${statsListAttr(`${day} · ${LABEL[type]}`,r.ids[type])}><div class="stats-bar ${type}" style="height:${Math.max(2,(val/yMax)*100)}%"><span class="stats-bar-value">${val}</span></div></div>`).join('')}</div>`;
+                }).join('')}
+              </div>
+              <div class="stats-xlabels">
+                ${rows.map(r=>`<div class="stats-xlabel">${String(r.date.getDate()).padStart(2,'0')}.${String(r.date.getMonth()+1).padStart(2,'0')}</div>`).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="stats-tip" id="statsTip" hidden></div>
+          <div class="stats-legend">
+            <span class="stats-legend-item"><i class="stats-legend-dot created"></i>Создано</span>
+            <span class="stats-legend-item"><i class="stats-legend-dot completed"></i>Выполнено</span>
+            <span class="stats-legend-item"><i class="stats-legend-dot overdue"></i>Просрочено</span>
+          </div>
+        </div>
+        <aside class="stats-summary">
+          <h3>Итого за период</h3>
+          <div class="stats-summary-row"><span class="stats-summary-label"><i class="stats-legend-dot created"></i>Создано</span><strong${statsListAttr('Создано · '+caption,periodIds('created'))}>${periodTotal.created}</strong></div>
+          <div class="stats-summary-row"><span class="stats-summary-label"><i class="stats-legend-dot completed"></i>Выполнено</span><strong${statsListAttr('Выполнено · '+caption,periodIds('completed'))}>${periodTotal.completed}</strong></div>
+          <div class="stats-summary-row"><span class="stats-summary-label"><i class="stats-legend-dot overdue"></i>Просрочено</span><strong${statsListAttr('Просрочено · '+caption,periodIds('overdue'))}>${periodTotal.overdue}</strong></div>
+          <div class="stats-summary-line"></div>
+          <div class="stats-summary-change ${overdueDelta<=0?'positive':'negative'}"><strong>${overdueDelta>0?'↗':'↘'} ${Math.abs(overdueDelta)}%</strong><span>${overdueDelta<=0?'Количество просроченных задач уменьшилось относительно предыдущего периода.':'Количество просроченных задач выросло относительно предыдущего периода.'}</span></div>
+          <div class="stats-summary-note"><strong>${completionRate}%</strong>доля выполненных задач от созданных за выбранный период</div>
+        </aside>
+      </div>
+      <div class="stats-insight ${overdueDelta<=0?'positive':'negative'}"><div class="stats-insight-icon">${overdueDelta<=0?'✓':'!'}</div><div><strong>${overdueDelta<=0?'Хорошая динамика!':'Обрати внимание на просроченные задачи'}</strong><span>${overdueDelta<=0?'Количество просроченных задач уменьшилось относительно предыдущего периода.':'Количество просроченных задач выросло относительно предыдущего периода.'}</span></div></div>
+    </section>
+    ${renderQualityBlock(start,n,statsTechMatch(),when,statsBrigadeMatch())}
+    ${renderTechTable(start,n,caption,opts)}`;
+  const rerender=()=>{saveStatsPrefs();renderStats();};
+  document.querySelectorAll('[data-stats-period]').forEach(b=>b.onclick=()=>{statsPeriod=b.dataset.statsPeriod;rerender();});
+  document.querySelectorAll('[data-stats-brigade]').forEach(b=>b.onclick=()=>{statsBrigade=b.dataset.statsBrigade;rerender();});
+  const techSel=$('statsTechFilter'); if(techSel)techSel.onchange=()=>{statsTech=techSel.value;rerender();};
+  document.querySelectorAll('[data-tech-sort]').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.techSort;
+    statsTechSort=statsTechSort.key===k?{key:k,dir:-statsTechSort.dir}:{key:k,dir:k==='name'?1:-1};
+    rerender();
+  });
+  document.querySelectorAll('[data-tech-row]').forEach(tr=>tr.onclick=e=>{if(e.target.closest('[data-stats-list]'))return;const nm=tr.dataset.techRow;statsTech=statsTech===nm?'':nm;rerender();});
+}
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));
+  $('screen-'+b.dataset.screen).classList.add('active');
+  if(b.dataset.screen==='history')renderHistory();
+  if(b.dataset.screen==='stats')renderStats();
+  if(b.dataset.screen==='archive')renderArchive();
+  if(b.dataset.screen==='settings')refreshAttachInfo();
+});
+['search','priorityFilter','shiftFilter','techFilter'].forEach(id=>{
+  let el=$(id);
+  if(el)el.addEventListener(el.tagName==='INPUT'&&el.type==='text'?'input':'change',render);
+});
+
+$('historySearch')?.addEventListener('input',renderHistory);
+
+document.querySelectorAll('.dash-card[data-dash-filter]').forEach(card=>{
+  const applyDashboardFilter=()=>{
+    dashboardFilter=card.dataset.dashFilter;
+    $('search').value='';
+    $('priorityFilter').value='';
+    $('shiftFilter').value='';
+    $('techFilter').value='';
+    render();
+  };
+  card.addEventListener('click',applyDashboardFilter);
+  card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();applyDashboardFilter()}});
+});
+
+const clearArchiveBtn=$('clearArchiveBtn'),clearArchiveDlg=$('clearArchiveDlg'),clearArchiveConfirm=$('clearArchiveConfirm'),clearArchiveCancel=$('clearArchiveCancel'),clearArchiveClose=$('clearArchiveClose'),archiveClearCount=$('archiveClearCount'),clearArchiveDlgCount=$('clearArchiveDlgCount');
+function syncArchiveClearState(){
+  const count=(db.archive||[]).length;
+  if(archiveClearCount)archiveClearCount.textContent=count?`${count} ${plural(count,'задача','задачи','задач')} в архиве`:'Архив пуст';
+  if(clearArchiveBtn)clearArchiveBtn.disabled=count===0;
+  if(clearArchiveDlgCount)clearArchiveDlgCount.textContent=count?`${count} ${plural(count,'задачу','задачи','задач')} из архива`:'все задачи из архива';
+}
+function openClearArchiveDialog(){
+  syncArchiveClearState();
+  if(!db.archive.length)return;
+  if(clearArchiveDlg?.showModal)clearArchiveDlg.showModal();
+}
+function closeClearArchiveDialog(){clearArchiveDlg?.close();}
+function clearArchiveData(){
+  const ids=new Set((db.archive||[]).map(t=>String(t.id)));
+  if(!ids.size){closeClearArchiveDialog();return;}
+  syncStatsArchive();
+  db.clearedArchiveIds=[...new Set([...(db.clearedArchiveIds||[]),...ids])];
+  db.archive=[];
+  // Историю не удаляем: она нужна для сохранения исторической статистики.
+  save();
+  closeClearArchiveDialog();
+  syncArchiveClearState();
+  refreshAttachInfo();
+  renderHistory();
+  renderStats();
+  renderArchive();
+}
+clearArchiveBtn?.addEventListener('click',openClearArchiveDialog);
+clearArchiveConfirm?.addEventListener('click',clearArchiveData);
+clearArchiveCancel?.addEventListener('click',closeClearArchiveDialog);
+clearArchiveClose?.addEventListener('click',closeClearArchiveDialog);
+clearArchiveDlg?.addEventListener('click',e=>{if(e.target===clearArchiveDlg)closeClearArchiveDialog();});
+
+const createBackupBtn=$('createBackupBtn'),backupStatus=$('backupStatus');
+function formatBackupStatusPath(fileName){
+  if(!fileName)return '';
+  return `Создано: ${fileName}`;
+}
+createBackupBtn?.addEventListener('click',async()=>{
+  if(!window.grassAdmin?.createBackup){
+    if(backupStatus)backupStatus.textContent='Функция резервного копирования недоступна';
+    return;
+  }
+  createBackupBtn.disabled=true;
+  if(backupStatus)backupStatus.textContent='Создание копии…';
+  try{
+    const result=await window.grassAdmin.createBackup();
+    if(result?.ok){
+      if(backupStatus)backupStatus.textContent=formatBackupStatusPath(result.name);
+      await refreshBackupData();
+    }else{
+      if(backupStatus)backupStatus.textContent=result?.error||'Не удалось создать копию';
+    }
+  }catch(error){
+    console.error(error);
+    if(backupStatus)backupStatus.textContent='Не удалось создать копию';
+  }finally{
+    createBackupBtn.disabled=false;
+  }
+});
+
+const autoArchiveToggle=$('autoArchiveToggle'),autoArchiveDaysSelect=$('autoArchiveDays'),autoArchiveDaysRow=$('autoArchiveDaysRow');
+function syncAutoArchiveSettings(){
+  if(autoArchiveToggle)autoArchiveToggle.checked=autoArchiveEnabled;
+  if(autoArchiveDaysSelect)autoArchiveDaysSelect.value=String(autoArchiveDays);
+  if(autoArchiveDaysRow)autoArchiveDaysRow.classList.toggle('disabled',!autoArchiveEnabled);
+}
+autoArchiveToggle?.addEventListener('change',()=>{autoArchiveEnabled=autoArchiveToggle.checked;grassStorage.setItem('autoArchiveEnabled',String(autoArchiveEnabled));syncAutoArchiveSettings();if(autoArchiveCompleted()){render();renderHistory();renderStats();renderArchive();}});
+$('handoverWarn')?.addEventListener('change',()=>{setViewPref('handoverWarn',$('handoverWarn').value);loadViewPrefs();renderShiftInfo();});
+if($('escalationHours')){$('escalationHours').value=String(escalationHours);$('escalationHours').addEventListener('change',()=>{escalationHours=Number($('escalationHours').value)||2;grassStorage.setItem('escalationHours',String(escalationHours));render();});}
+autoArchiveDaysSelect?.addEventListener('change',()=>{autoArchiveDays=Number(autoArchiveDaysSelect.value);if(![7,14,30].includes(autoArchiveDays))autoArchiveDays=7;grassStorage.setItem('autoArchiveDays',String(autoArchiveDays));if(autoArchiveCompleted()){render();renderHistory();renderStats();renderArchive();}});
+syncAutoArchiveSettings();
+autoArchiveCompleted();
+
+
+const updateStatus=$('updateStatus'),checkUpdateBtn=$('checkUpdateBtn'),installUpdateBtn=$('installUpdateBtn');
+const dbInfoEls={version:$('dbInfoVersion'),schemaVersion:$('dbInfoSchemaVersion'),size:$('dbInfoSize'),lastBackup:$('dbInfoLastBackup'),tasks:$('dbInfoTasks'),archive:$('dbInfoArchive'),history:$('dbInfoHistory'),backups:$('dbInfoBackups'),path:$('dbInfoPath')};
+const refreshDbInfoBtn=$('refreshDbInfoBtn'),openBackupFolderBtn=$('openBackupFolderBtn'),restoreFromBackupBtn=$('restoreFromBackupBtn');
+const restoreDbDlg=$('restoreDbDlg'),restoreDbName=$('restoreDbName'),restoreDbSelect=$('restoreDbSelect');
+let restoreDbFile=null, restoreDbItems=[];
+function formatBytes(n){n=Number(n)||0;if(n<1024)return `${n} Б`;if(n<1048576)return `${(n/1024).toFixed(1)} КБ`;return `${(n/1048576).toFixed(2)} МБ`}
+function formatDateTimeIso(v){if(!v)return '—';const d=new Date(v);return Number.isNaN(d.getTime())?'—':d.toLocaleString('ru-RU')}
+function setUpdateStatus(text){if(updateStatus)updateStatus.textContent=text}
+let mirrorWarned=false;
+function fillMirrorInfo(info){
+  const dir=info?.mirrorDir||'',st=info?.mirror;
+  if($('mirrorDirText'))$('mirrorDirText').textContent=(dir||'Не выбрана — копии только в папке данных.')+(info?.mirrorFromConfig?' (задана администратором в grass-config.json)':'');
+  const el=$('mirrorStatus');if(!el)return;
+  if(!dir){el.textContent='';el.classList.remove('bad');return;}
+  if(!st||st.dir!==dir){el.textContent='Копий во второй папке ещё не было.';el.classList.remove('bad');return;}
+  el.classList.toggle('bad',!st.ok);
+  el.textContent=st.ok?`Последняя копия: ${formatDateTimeIso(st.at)}`:`⚠ Не удалось скопировать ${formatDateTimeIso(st.at)}: ${st.error}`;
+  if(!st.ok&&!mirrorWarned){mirrorWarned=true;toast(`Вторая папка для копий недоступна: ${st.error}. Программа работает, копии пока только в папке данных.`);}
+}
+function fillSharedInfo(info){
+  fillMirrorInfo(info);
+  if($('dbInfoMode'))$('dbInfoMode').textContent=info?.shared?'Общая база (терминал)':'Личная база на этом компьютере';
+  fillBackupCheck(info?.backupCheck);
+  const box=$('dbInfoSessions');if(!box)return;
+  if(!info?.shared){box.textContent='—';return;}
+  const list=Array.isArray(info.sessions)?info.sessions:[];
+  box.textContent=list.length?list.map(s=>`${s.technologist||'технолог не выбран'} (${s.osUser||'—'}, ${s.site==='VOLZHSKY'?'Волжский':'Ахтуба'}${s.version?', версия '+s.version:''})`).join(', '):'больше никого';
+}
+// 1.7.11: цела ли последняя резервная копия (проверка раз в сутки после дневной копии и по кнопке)
+function fillBackupCheck(bc){
+  const el=$('dbInfoBackupCheck');if(!el)return;
+  el.classList.toggle('bad',!!bc&&bc.ok===false);
+  if(!bc){el.textContent='ещё не проверялась';return;}
+  if(!bc.file){el.textContent=`копий пока нет · ${formatDateTimeIso(bc.at)}`;return;}
+  el.textContent=bc.ok?`✓ цела: ${bc.file} · проверена ${formatDateTimeIso(bc.at)}`:`⚠ ${bc.file} не годится для восстановления: ${bc.error} · ${formatDateTimeIso(bc.at)}`;
+}
+$('checkBackupBtn')?.addEventListener('click',async()=>{
+  const el=$('dbInfoBackupCheck');if(el)el.textContent='Проверяем…';
+  try{const r=await window.grassAdmin?.verifyBackup?.();fillBackupCheck(r);if(r&&r.ok===false)showHealthBar(grassStorage.health?.());}catch(e){if(el)el.textContent='⚠ '+(e?.message||e);}
+});
+if(SHARED_MODE){
+  if(checkUpdateBtn)checkUpdateBtn.hidden=true;
+  setUpdateStatus('В терминале программу обновляет администратор сервера.');
+}
+function syncRestoreBackupDialog(){
+  if(!restoreDbSelect)return;
+  if(!restoreDbItems.length){
+    restoreDbSelect.innerHTML='<option value="">Нет доступных резервных копий</option>';
+    restoreDbSelect.disabled=true;
+    restoreDbFile=null;
+    if(restoreDbName)restoreDbName.textContent='Создай резервную копию и нажми «Обновить».';
+    return;
+  }
+  restoreDbSelect.disabled=false;
+  restoreDbSelect.replaceChildren();
+  restoreDbItems.forEach(item=>{
+    const option=document.createElement('option');
+    option.value=String(item.name || '');
+    option.textContent=`${formatDateTimeIso(item.createdAt)} · ${item.mirror?'вторая папка · '+String(item.name).slice(7):(item.name || '')} · ${formatBytes(item.size)}`;
+    restoreDbSelect.appendChild(option);
+  });
+  restoreDbFile=restoreDbItems[0].name;
+  restoreDbSelect.value=restoreDbFile;
+  if(restoreDbName)restoreDbName.textContent=`Выбрана копия: ${restoreDbFile}`;
+}
+async function loadBackupItems(){
+  try{
+    let r=null;
+    if(window.grassAdmin?.getBackupData){
+      r=await window.grassAdmin.getBackupData();
+      if(r?.info){
+        const info=r.info;
+        if(dbInfoEls.version)dbInfoEls.version.textContent=info.version||'—';
+        if(dbInfoEls.schemaVersion)dbInfoEls.schemaVersion.textContent=info.schemaVersion??'—';
+        if(dbInfoEls.size)dbInfoEls.size.textContent=formatBytes(info.size);
+        if(dbInfoEls.lastBackup)dbInfoEls.lastBackup.textContent=formatDateTimeIso(info.lastBackup);
+        if(dbInfoEls.tasks)dbInfoEls.tasks.textContent=info.tasks??'—';
+        if(dbInfoEls.archive)dbInfoEls.archive.textContent=info.archive??'—';
+        if(dbInfoEls.history)dbInfoEls.history.textContent=info.history??'—';
+        if(dbInfoEls.backups)dbInfoEls.backups.textContent=info.backups??'—';
+        if(dbInfoEls.path)dbInfoEls.path.textContent=info.path||'—';
+        fillSharedInfo(info);
+      }
+    } else if(window.grassAdmin?.listBackups){
+      r=await window.grassAdmin.listBackups();
+    } else {
+      throw new Error('Функция списка резервных копий недоступна.');
+    }
+    restoreDbItems=Array.isArray(r?.items)?r.items:[];
+    syncRestoreBackupDialog();
+    return r?.ok!==false;
+  }catch(e){
+    console.error('GRASS backup list load failed:',e);
+    restoreDbItems=[];
+    syncRestoreBackupDialog();
+    return false;
+  }
+}
+async function refreshDatabaseInfo(){
+  if(!window.grassAdmin?.getDatabaseInfo)return;
+  try{
+    const r=await window.grassAdmin.getDatabaseInfo();
+    if(!r?.ok)return;
+    dbInfoEls.version.textContent=r.version||'—';dbInfoEls.schemaVersion.textContent=r.schemaVersion??'—';dbInfoEls.size.textContent=formatBytes(r.size);dbInfoEls.lastBackup.textContent=formatDateTimeIso(r.lastBackup);dbInfoEls.tasks.textContent=r.tasks;dbInfoEls.archive.textContent=r.archive;dbInfoEls.history.textContent=r.history;dbInfoEls.backups.textContent=r.backups;dbInfoEls.path.textContent=r.path||'—';fillSharedInfo(r);
+  }catch(e){console.error('GRASS database info refresh failed:',e)}
+  refreshAttachInfo();
+}
+// 1.7.4: размер папки вложений и файлы очищенных задач.
+async function refreshAttachInfo(){
+  if(!window.grassAdmin?.attachmentsInfo)return null;
+  try{
+    const a=await window.grassAdmin.attachmentsInfo();if(!a?.ok)return null;
+    if($('dbInfoAttach'))$('dbInfoAttach').textContent=`${formatBytes(a.bytes)} · ${a.files} файл.`;
+    const c=a.cleared||{bytes:0,files:0,tasks:0};
+    if($('purgeAttachCount'))$('purgeAttachCount').textContent=c.files?`${c.files} файл. · ${formatBytes(c.bytes)}`:'нет';
+    if($('purgeAttachBtn'))$('purgeAttachBtn').disabled=!c.files||readOnly;
+    return a;
+  }catch(e){console.warn('GRASS attachments info failed:',e);return null;}
+}
+$('purgeAttachBtn')?.addEventListener('click',async()=>{
+  const a=await refreshAttachInfo();const c=a?.cleared;if(!c?.files)return;
+  if(!await askDialog({title:'Удалить файлы очищенных задач?',text:`${c.files} файл. (${formatBytes(c.bytes)}) у ${c.tasks} задач, которых уже нет в архиве.\n\nПеред удалением будет сделана копия базы, а файлы ещё 30 дней останутся в папке резервных копий (removed-attachments).`,ok:'Удалить файлы',danger:true}))return;
+  $('purgeAttachBtn').disabled=true;
+  const r=await window.grassAdmin.purgeClearedAttachments();
+  if(r?.ok)toast(`Удалено файлов у ${r.removed} задач: ${formatBytes(r.bytes)}.`);
+  else toast(r?.error||'Файлы не удалены.');
+  refreshDatabaseInfo();
+});
+async function refreshBackupData(){
+  await Promise.all([refreshDatabaseInfo(),loadBackupItems()]);
+}
+async function refreshBackupList(){return loadBackupItems()}
+function friendlyUpdateError(error){
+  const message=String(error||'');
+  if(/404|releases\.atom|GitHub.*404|Not Found/i.test(message)) return 'Автообновление пока недоступно: сервер обновлений не настроен для этого приложения.';
+  if(/401|403|authentication token|Bad credentials|Forbidden/i.test(message)) return 'Автообновление пока недоступно: нет доступа к серверу обновлений.';
+  return 'Не удалось проверить обновления. Попробуйте позже.';
+}
+checkUpdateBtn?.addEventListener('click',async()=>{
+  checkUpdateBtn.disabled=true;setUpdateStatus('Проверяем наличие обновлений…');
+  try{const r=await window.grassAdmin?.checkForUpdates();if(r&&!r.ok)setUpdateStatus(friendlyUpdateError(r.error))}catch(e){setUpdateStatus(friendlyUpdateError(e?.message))}finally{checkUpdateBtn.disabled=false}
+});
+installUpdateBtn?.addEventListener('click',async()=>{installUpdateBtn.disabled=true;setUpdateStatus('Делаем копию базы перед обновлением…');const r=await window.grassAdmin?.installUpdate();installUpdateBtn.disabled=false;if(r?.ok)setUpdateStatus(`Копия базы: ${r.backup||'сделана'}. Обновление устанавливается, программа перезапустится.`);else if(r?.error)setUpdateStatus(r.error)});
+window.grassAdmin?.onUpdateStatus?.(payload=>{
+  if(payload?.state==='mirror-failed'){toast(`Вторая папка для копий недоступна: ${payload.error}. Программа работает, копии пока только в папке данных.`);refreshDatabaseInfo?.();return;}
+  if(!payload)return;
+  if(payload.state==='checking')setUpdateStatus('Проверяем наличие обновлений…');
+  if(payload.state==='available')setUpdateStatus(`Доступно обновление ${payload.version}. Загрузка началась автоматически.`);
+  if(payload.state==='downloading')setUpdateStatus(`Загрузка обновления: ${payload.percent}%`);
+  if(payload.state==='downloaded'){setUpdateStatus(`Обновление ${payload.version} загружено. Установится только по кнопке «Установить обновление» — перед этим программа сделает копию базы.`);if(installUpdateBtn)installUpdateBtn.hidden=false;toast(`Загружено обновление ${payload.version}. Установить можно в Настройках.`)}
+  if(payload.state==='latest')setUpdateStatus('Установлена последняя доступная версия.');
+  if(payload.state==='error')setUpdateStatus(friendlyUpdateError(payload.error));
+  if(payload.state==='database-restored')setUpdateStatus(`База восстановлена из ${payload.name}.`);
+});
+async function refreshAllBackupData(){return refreshBackupData()}
+refreshDbInfoBtn?.addEventListener('click',refreshAllBackupData);
+openBackupFolderBtn?.addEventListener('click',async()=>{const r=await window.grassAdmin?.openBackupFolder();if(r?.error)setUpdateStatus(`Папка резервных копий: ${r.error}`)});
+restoreFromBackupBtn?.addEventListener('click',async()=>{
+  restoreFromBackupBtn.disabled=true;
+  if(backupStatus)backupStatus.textContent='Загрузка резервных копий…';
+  try{
+    const loaded=await loadBackupItems();
+    if(!loaded){
+      if(backupStatus)backupStatus.textContent='Не удалось получить список резервных копий.';
+      return;
+    }
+    if(!restoreDbItems.length){
+      if(backupStatus)backupStatus.textContent='Нет доступных резервных копий для восстановления.';
+      return;
+    }
+    syncRestoreBackupDialog();
+    if(!restoreDbDlg){
+      if(backupStatus)backupStatus.textContent='Окно восстановления недоступно.';
+      return;
+    }
+    try{
+      if(restoreDbDlg.open) restoreDbDlg.close();
+      if(typeof restoreDbDlg.showModal==='function') restoreDbDlg.showModal();
+      else restoreDbDlg.setAttribute('open','');
+      if(backupStatus)backupStatus.textContent='';
+    }catch(e){
+      console.error('GRASS restore dialog open failed:',e);
+      if(backupStatus)backupStatus.textContent='Не удалось открыть окно восстановления.';
+    }
+  }catch(e){
+    console.error('GRASS restore dialog failed:',e);
+    if(backupStatus)backupStatus.textContent='Не удалось открыть восстановление из бэкапа.';
+  }finally{
+    restoreFromBackupBtn.disabled=false;
+  }
+});
+restoreDbSelect?.addEventListener('change',()=>{
+  restoreDbFile=restoreDbSelect.value||null;
+  restoreDbName.textContent=restoreDbFile?`Выбрана копия: ${restoreDbFile}`:'';
+});
+function closeRestoreDbDialog(){restoreDbFile=null;if(restoreDbDlg){try{restoreDbDlg.close()}catch(_){restoreDbDlg.removeAttribute('open')}}}
+$('restoreDbClose')?.addEventListener('click',closeRestoreDbDialog);
+$('restoreDbCancel')?.addEventListener('click',closeRestoreDbDialog);
+$('restoreDbConfirm')?.addEventListener('click',async()=>{
+  if(!restoreDbFile)return;
+  const file=restoreDbFile;$('restoreDbConfirm').disabled=true;
+  try{
+    const r=await window.grassAdmin?.restoreBackup(file);
+    if(r?.ok){closeRestoreDbDialog();setUpdateStatus(`База восстановлена из ${r.name}. Перезагружаем приложение…`);setTimeout(()=>location.reload(),500)}else{setUpdateStatus(r?.error||'Восстановление не выполнено.')}
+  }catch(e){console.error('GRASS restore failed:',e);setUpdateStatus('Восстановление не выполнено.')}finally{$('restoreDbConfirm').disabled=false;restoreDbFile=null}
+});
+restoreDbDlg?.addEventListener('click',e=>{if(e.target===restoreDbDlg)closeRestoreDbDialog()});
+refreshAllBackupData();
+// 1.7.3: вторая папка для копий базы и вложений.
+$('mirrorChoose')?.addEventListener('click',async()=>{
+  const r=await window.grassAdmin?.chooseMirror?.();
+  if(!r?.ok)return;
+  const w=grassStorage.setItem('backupMirrorDir',r.path);
+  if(w&&w.ok===false){$('mirrorStatus').textContent=w.error||'Папка не сохранена.';return;}
+  $('mirrorStatus').textContent='Копируем…';
+  await window.grassAdmin?.mirrorNow?.();
+  await refreshDatabaseInfo();
+});
+$('mirrorNow')?.addEventListener('click',async()=>{
+  $('mirrorStatus').textContent='Копируем…';
+  const r=await window.grassAdmin?.mirrorNow?.();
+  if(r?.skipped)$('mirrorStatus').textContent='Сначала выберите папку.';
+  else await refreshDatabaseInfo();
+});
+$('mirrorClear')?.addEventListener('click',async()=>{const w=grassStorage.setItem('backupMirrorDir','');await refreshDatabaseInfo();if(w&&w.ok===false)$('mirrorStatus').textContent=w.error||'Не отключено.';});
+// 1.7.3: проверка базы раз в день — при проблеме жёлтая плашка с переходом к восстановлению.
+function openRestoreFlow(){
+  $('grass-load-error')?.remove();
+  document.querySelector('nav [data-screen="settings"]')?.click();
+  restoreFromBackupBtn?.click();
+}
+document.addEventListener('click',e=>{if(e.target.closest('[data-open-restore]'))openRestoreFlow();});
+function showHealthBar(h){
+  if(dbLoadError)return;   // база не прочиталась — восстановление уже предложено на весь экран
+  if(!h||h.ok!==false||!Array.isArray(h.problems))return;
+  let el=$('grass-health');
+  if(!el){
+    el=document.createElement('div');el.id='grass-health';
+    el.innerHTML='<span></span><button type="button" data-open-restore>↻ Восстановить из копии</button><button type="button" data-health-close>×</button>';
+    el.querySelector('[data-health-close]').onclick=()=>{el.hidden=true;};
+    document.body.appendChild(el);
+  }
+  el.querySelector('span').textContent='⚠ '+h.problems.join(' · ');el.hidden=false;
+}
+(()=>{let h=null;try{h=grassStorage.health?.();}catch(_){}showHealthBar(h);})();
+// 1.7.11: проверка копии прошла во время работы — плашка сразу, а не со следующего запуска
+window.grassAdmin?.onUpdateStatus?.(payload=>{if(payload?.state==='health'){showHealthBar(payload.health);refreshDatabaseInfo?.();}});
+
+function clock(){autoShiftSync();let n=now();let parts=n.ds.split('.');let months=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];$('dateMain').textContent=n.ds;$('dateSub').textContent='';$('weekdayName').textContent=n.weekday;let wd=n.d.getDay();wd=wd===0?6:wd-1;let dots='';for(let i=0;i<7;i++)dots+=`<i class="${i===wd?'active':''}"></i>`;$('weekdayDots').innerHTML=dots;document.querySelectorAll('.weekday-labels span').forEach((el,i)=>el.classList.toggle('active',i===wd));$('time').textContent=n.ts;renderShiftInfo();renderNearestTask()}
+loadViewPrefs();clock();setInterval(clock,1000);setInterval(()=>{if(autoArchiveCompleted()){render();renderHistory();renderStats();renderArchive();syncArchiveClearState();}},60000);syncArchiveClearState();render();checkClock();setInterval(checkClock,30000);   // 1.7.9: проверка часов
+$('nearestTask')?.addEventListener('click',()=>{const id=$('nearestTask').dataset.taskId;if(id)openDlg(id)});renderHistory();renderStats();renderArchive();
+maybeAutoSummary();   // только при открытии программы: у работающей смены, которая задержалась, сводка не выскакивает
+if(SHARED_MODE){
+  let sessionTech=null;
+  const syncTick=()=>{
+    try{if(sessionTech!==technologist){sessionTech=technologist;grassStorage.sessionSet?.(technologist);}}catch(_){}
+    try{pullRemoteChanges();}catch(e){console.warn('GRASS: ошибка подтягивания изменений',e);}
+  };
+  syncTick();setInterval(syncTick,3000);
+}

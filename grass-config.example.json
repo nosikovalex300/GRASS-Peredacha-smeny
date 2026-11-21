@@ -1,0 +1,5 @@
+{
+  "dataDir": "D:/GRASS/data",
+  "admins": ["Ivanov"],
+  "backupMirrorDir": "E:/GRASS-mirror"
+}

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>GRASS — Передача смены</title><link rel="stylesheet" href="styles.css">
+
+
+
+
+</head><body>
+<div id="siteGate" class="site-gate" aria-modal="true" role="dialog">
+  <div class="site-gate-card">
+    <div class="site-gate-logo">GRASS</div>
+    <h2>Передача смены</h2>
+    <p>Выберите площадку для работы</p>
+    <div class="site-choice-grid">
+      <button type="button" data-site-choice="AHTUBA"><span>🏭</span><b>АХТУБА</b><small>Рабочая площадка</small></button>
+      <button type="button" data-site-choice="VOLZHSKY"><span>🏭</span><b>ВОЛЖСКИЙ</b><small>Рабочая площадка</small></button>
+    </div>
+  </div>
+</div>
+<div class="app-shell">
+<aside id="sidebar" class="sidebar" aria-label="Меню">
+  <div class="brand"><img class="brand-logo" src="img/logo.png" alt="GRASS"><div><b>GRASS</b><small>С заботой о чистом будущем</small></div></div>
+  <button id="addBtn" type="button" class="add side-add">+ &nbsp;Добавить задачу</button>
+  <nav aria-label="Разделы"><button data-screen="tasks" class="active"><img class="nav-icon" src="img/nav-tasks.png" alt=""><span>Задачи</span><em id="navTasksBadge" class="nav-badge" hidden></em></button><button data-screen="journal"><img class="nav-icon" src="img/nav-journal.png" alt=""><span>Журнал</span></button><button data-screen="history"><img class="nav-icon" src="img/nav-history.png" alt=""><span>История</span></button><button data-screen="stats"><img class="nav-icon" src="img/nav-stats.png" alt=""><span>Статистика</span></button><button data-screen="archive"><img class="nav-icon" src="img/nav-archive.png" alt=""><span>Архив</span></button><button data-screen="settings"><img class="nav-icon" src="img/nav-settings.png" alt=""><span>Настройки</span></button></nav>
+  <div class="side-spacer"></div>
+  <section class="side-person" aria-label="Технолог и смена">
+    <div class="select-wrap tech-selector"><small class="side-label">Технолог</small><button id="techBtn" class="selector" type="button"><img class="tech-coat-icon" src="img/tech-coat.png" alt="" aria-hidden="true"><b id="techLabel">Носиков А.Ю.</b><i>⌄</i></button><div id="techMenu" class="menu"></div></div>
+    <div class="select-wrap shift-wrap"><small class="side-label" id="shiftSideLabel">Смена</small><button id="shiftBtn" type="button" class="selector shift-selector"><b id="shiftLabel">Смена D</b><i>⌄</i></button><div id="shiftMenu" class="menu"></div></div>
+    <div class="side-site"><span id="siteBadge" class="site-badge">АХТУБА</span><button type="button" id="changeSiteBtn" class="change-site-btn">Сменить площадку</button></div>
+  </section>
+</aside>
+<div class="app-main">
+<div id="escalationBar" class="escalation-bar" role="alert" hidden></div>
+
+<main id="screen-tasks" class="screen active">
+  <div class="page-head"><div><h1>Передача смены</h1><p class="muted">Задачи, замечания, важная информация</p></div><div class="slogan">Делаем мир<br>чище!</div></div>
+  <div id="shiftOffWarn" class="shift-off-warn" hidden><span id="shiftOffText"></span><button type="button" id="shiftBackBtn">Вернуть</button></div>
+  <section class="top-tiles">
+    <section id="shiftTile" class="tile shift-info" aria-label="Текущая смена и передача">
+      <div class="shift-tile-row">
+        <div class="shift-info-block"><small>Текущая смена</small><b id="currentShiftInfo">—</b></div>
+        <div class="tile-divider"></div>
+        <div class="shift-info-block shift-info-next"><small>Передача</small><b id="nextShiftInfo">—</b><span id="nextShiftTimeInfo"></span></div>
+      </div>
+      <div class="shift-tile-row">
+        <div class="shift-progress" aria-hidden="true"><i id="shiftProgress"></i></div>
+        <button type="button" id="shiftSummaryBtn" class="shift-summary-btn" title="Краткая сводка предыдущей смены"><img src="shift-summary-icon.png" alt=""><span>Сводка смены</span></button>
+      </div>
+      <div id="handoverSoon" class="handover-soon-text" hidden></div>
+    </section>
+    <div class="nearest-task tile" id="nearestTask" aria-live="polite">
+      <div class="nearest-task-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+      <div class="nearest-task-content">
+        <small>Ближайшая задача</small>
+        <b id="nearestTaskTitle">—</b>
+        <span id="nearestTaskMeta"></span>
+      </div>
+    </div>
+    <div class="clock tile">
+      <div class="clock-date-block"><small>ДАТА</small><b id="dateMain"></b><span id="dateSub"></span></div>
+      <div class="tile-divider"></div>
+      <div class="clock-time-block"><small>ВРЕМЯ</small><strong id="time"></strong></div>
+      <div class="clock-weekday"><b id="weekdayName"></b><div class="weekday-dots" id="weekdayDots"></div><div class="weekday-labels"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div></div>
+    </div>
+  </section>
+
+  <section class="mini-dashboard" aria-label="Сводка по задачам, нажми для фильтра">
+    <div class="dash-card" data-dash-filter="all" role="button" tabindex="0"><strong id="dashAll">0</strong><span>Все</span></div>
+    <div class="dash-card" data-dash-filter="active" role="button" tabindex="0"><strong id="dashActive">0</strong><span>Активных</span></div>
+    <div class="dash-card overdue" data-dash-filter="overdue" role="button" tabindex="0"><strong id="dashOverdue">0</strong><span>Просрочены</span></div>
+    <div class="dash-card high" data-dash-filter="high" role="button" tabindex="0"><strong id="dashHigh">0</strong><span>Высоких</span></div>
+    <div class="dash-card done" data-dash-filter="done" role="button" tabindex="0"><strong id="dashDone">0</strong><span>Выполнено</span></div>
+    <div class="dash-card work-status" data-dash-filter="work" role="button" tabindex="0"><strong id="dashWork">0</strong><span>В работе</span></div>
+    <div class="dash-card pass-status" data-dash-filter="pass" role="button" tabindex="0"><strong id="dashPass">0</strong><span>Передать</span></div>
+    <div class="dash-card off-status" data-dash-filter="off" role="button" tabindex="0"><strong id="dashOff">0</strong><span>Не в работе</span></div>
+    <div class="dash-card mine" data-dash-filter="mine" role="button" tabindex="0"><strong id="dashMine">0</strong><span>Мои</span></div>
+  </section>
+
+  <section class="tools smart-tools" aria-label="Поиск и фильтры"><label class="search-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg><input id="search" placeholder="Поиск: задача, комментарий, история..." aria-label="Поиск"></label>
+<select id="priorityFilter" aria-label="Приоритет"><option value="">Все приоритеты</option><option>Низкий</option><option>Обычный</option><option>Высокий</option></select>
+<select id="shiftFilter" aria-label="Смена"><option value="">Все смены</option><option value="A">Смена A</option><option value="B">Смена B</option><option value="C">Смена C</option><option value="D">Смена D</option></select>
+<select id="techFilter" aria-label="Технолог"><option value="">Все технологи</option><option>Носиков А.Ю.</option><option>Егоров Е.В.</option><option>Покусаев Е.С.</option><option>Рычков С.С.</option><option>Никулин О.В.</option><option>Степуро О.В.</option></select>
+  </section>
+  <section id="handoverBox" class="handover-box" style="display:none"></section><section id="pendingBox" class="pending-box" style="display:none"></section>
+  <div id="journalHint" class="journal-hint" hidden></div>
+  <section id="taskPanel" class="task-panel" aria-label="Список задач">
+    <div class="task-panel-head"><b>Задачи</b><span class="muted">сначала то, что горит</span><div class="density-toggle" role="group" aria-label="Плотность списка"><button type="button" data-density="normal" aria-pressed="true">Обычно</button><button type="button" data-density="compact" aria-pressed="false">Компактно</button></div></div>
+    <section id="tasks"></section>
+    <div id="empty" class="empty">Ничего не найдено. Измените поиск или фильтр.</div>
+  </section>
+  <section id="emptyState" class="empty-state" aria-label="Задач нет" hidden>
+    <div class="empty-state-icon"><img src="img/nav-tasks.png" alt=""></div>
+    <div class="empty-state-title">На смене пока чисто</div>
+    <div class="empty-state-text">Активных задач нет и никто ничего не передавал. Добавь задачу, если есть, что оставить следующей смене.</div>
+    <div class="empty-state-actions"><button type="button" id="emptyAdd" class="add">+ Добавить первую задачу</button><button type="button" id="emptySummary">Открыть сводку смены</button></div>
+  </section>
+</main>
+
+<main id="screen-journal" class="screen"><h1>Журнал смены</h1><p class="muted">Что происходило на смене: остановки, ремонты, приход сырья, замечания. У каждой площадки свой журнал.</p>
+<section class="journal-form settings-card" aria-label="Новая запись"><div class="journal-who" id="journalWho"></div><textarea id="journalText" rows="3" maxlength="4000" placeholder="Например: остановка линии 2, замена ножа"></textarea><div class="journal-form-row"><label>с<input id="journalFrom" type="time"></label><label>по<input id="journalTo" type="time"></label><span class="muted journal-tip">время необязательно · Ctrl+Enter — записать</span><span id="journalProblem" class="journal-problem" aria-live="polite"></span><button type="button" id="journalCancelEdit" hidden>Отмена</button><button type="button" id="journalAdd" class="add">Записать</button></div></section>
+<div class="history-search"><input id="journalSearch" type="text" placeholder="⌕  Поиск по журналу..."></div><div id="journalList" class="journal-list"></div></main>
+<main id="screen-history" class="screen"><h1>История</h1><p class="muted">История изменений задач</p><div class="history-search"><input id="historySearch" type="text" placeholder="⌕  Поиск задачи по названию..."></div><div id="history"></div></main>
+<main id="screen-stats" class="screen"><div class="screen-head-row"><div><h1>Статистика</h1><p class="muted">Сводка по текущему набору задач</p></div><div class="export-btns"><button type="button" id="statsXlsx" class="backup-btn">⬇ Excel</button><button type="button" id="statsPdf" class="backup-btn">⬇ PDF</button></div></div><div id="statView"></div></main>
+<main id="screen-archive" class="screen"><h1>Архив</h1><p class="muted">Удалённые задачи с полной историей действий</p><div id="archive"></div></main>
+<main id="screen-settings" class="screen"><h1>Настройки</h1><p class="muted">Параметры приложения</p><div class="settings-card view-card"><div class="settings-section-head"><div><b>Внешний вид</b><span>Плотность списка, предупреждение о передаче и уведомления — личные, у каждого технолога свои. Порог баннера — общий для площадки.</span></div></div><div class="settings-row"><div><b>Плотность списка задач</b><span>Компактно: каждая задача в одну строку, подробности при наведении.</span></div><div class="density-toggle" role="group" aria-label="Плотность списка"><button type="button" data-density="normal" aria-pressed="true">Обычно</button><button type="button" data-density="compact" aria-pressed="false">Компактно</button></div></div><div class="settings-row settings-row-select"><div><b>Предупреждать о передаче смены за</b><span>Плашка смены станет жёлтой: «Через N мин передача».</span></div><select id="handoverWarn"><option value="30">30 минут</option><option value="60">1 час</option><option value="120">2 часа</option><option value="0">Не предупреждать</option></select></div><div class="settings-row settings-row-select"><div><b>Уведомление Windows до срока задачи</b><span>О задачах, где вы исполнитель, а без исполнителя — о задачах вашей смены. О новой передаче вашей смене уведомление приходит всегда.</span></div><select id="notifyBefore"><option value="30">За 30 минут</option><option value="60">За 1 час</option><option value="0">Не уведомлять</option></select></div><div class="settings-row settings-row-select"><div><b>Красный баннер просрочки</b><span>Задача с высоким приоритетом просрочена дольше этого времени — баннер видят все.</span></div><select id="escalationHours"><option value="1">1 час</option><option value="2">2 часа</option><option value="4">4 часа</option><option value="8">8 часов</option></select></div></div><div class="settings-card sched-card" id="schedCard"><div class="settings-section-head"><div><b>График смен</b><span>Общий для Ахтубы и Волжского. Цикл: 2 дня, выходной, 2 ночи, 3 выходных; смены по 12 часов.</span></div></div><div id="schedForm" class="sched-form"><label>Начало дневной смены<input id="schedDayStart" type="time"><small id="schedNight"></small></label><label class="sched-order">Порядок бригад (через каждые 2 дня)<span class="sched-order-row"><select id="schedOrder0" aria-label="Бригада 1"><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select><span class="sched-arrow">→</span><select id="schedOrder1" aria-label="Бригада 2"><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select><span class="sched-arrow">→</span><select id="schedOrder2" aria-label="Бригада 3"><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select><span class="sched-arrow">→</span><select id="schedOrder3" aria-label="Бригада 4"><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select></span></label><label>Дата отсчёта<input id="schedAnchor" type="date"><small>первый дневной день первой бригады</small></label></div><div id="schedPreview" class="reg-preview sched-preview"></div><div class="sched-actions"><button type="button" id="schedDefault" class="backup-btn">Как было по умолчанию</button><button type="button" id="schedSave" class="backup-btn stage4-primary">Сохранить график</button></div><div id="schedLog" class="sched-log"></div></div><div class="settings-card reg-card" id="regCard"><div class="settings-section-head"><div><b>Регламент и шаблоны</b><span>Повторяющиеся задачи создаются сами в нужную смену. Шаблон без расписания — для кнопки «Из шаблона» в окне задачи. У каждой площадки свои.</span></div><button type="button" id="regAdd" class="backup-btn stage4-primary">+ Добавить</button></div><div id="regList" class="reg-list"></div></div><div class="settings-card"><div class="settings-row settings-row-toggle"><div><b>Автоматически архивировать выполненные</b><span>Выполненные задачи будут перемещаться в архив автоматически.</span></div><label class="settings-switch"><input id="autoArchiveToggle" type="checkbox"><span></span></label></div><div class="settings-row settings-row-select" id="autoArchiveDaysRow"><div><b>Архивировать через</b><span>Срок отсчитывается с момента выполнения задачи.</span></div><select id="autoArchiveDays"><option value="7">7 дней</option><option value="14">14 дней</option><option value="30">30 дней</option></select></div></div><div class="settings-card tech-management"><div class="settings-section-head"><div><b>Технологи</b><span>Добавление и удаление пользователей приложения. Список общий для Ахтубы и Волжского.</span></div><button type="button" id="toggleTechAdd" class="tech-collapse-btn" aria-label="Свернуть список технологов" aria-expanded="true">⌃</button></div><div class="tech-add-row" id="techAddRow"><input id="newTechnologist" type="text" maxlength="80" placeholder="Фамилия И.О."><button type="button" id="addTechnologist" class="add">+ Добавить</button></div><div id="technologistsList" class="technologists-list"></div></div><div class="settings-card stage4-data-card"><div class="settings-section-head stage4-data-head"><div><b>Данные и резервные копии</b><span>Резервное копирование, информация о базе и восстановление данных.</span></div><div class="stage4-actions"><button type="button" id="createBackupBtn" class="backup-btn stage4-primary">Создать копию</button><button type="button" id="restoreFromBackupBtn" class="backup-btn">Восстановить из бэкапа</button><button type="button" id="openBackupFolderBtn" class="backup-btn">Открыть папку</button><button type="button" id="refreshDbInfoBtn" class="backup-btn">Обновить</button><button type="button" id="checkBackupBtn" class="backup-btn">Проверить копию</button></div></div><div class="compact-db-info" id="dbInfoGrid"><div><span>Версия приложения</span><b id="dbInfoVersion">—</b></div><div><span>Версия БД</span><b id="dbInfoSchemaVersion">—</b></div><div><span>Размер БД</span><b id="dbInfoSize">—</b></div><div><span>Последний бэкап</span><b id="dbInfoLastBackup">—</b></div><div><span>Резервных копий</span><b id="dbInfoBackups">—</b></div><div><span>Активные задачи</span><b id="dbInfoTasks">—</b></div><div><span>Архив</span><b id="dbInfoArchive">—</b></div><div><span>История</span><b id="dbInfoHistory">—</b></div><div><span>Вложения</span><b id="dbInfoAttach">—</b></div><div class="db-info-path"><span>Файл базы</span><b id="dbInfoPath">—</b></div><div><span>Режим</span><b id="dbInfoMode">—</b></div><div class="db-info-path"><span>Сейчас работают</span><b id="dbInfoSessions">—</b></div><div class="db-info-path"><span>Проверка последней копии</span><b id="dbInfoBackupCheck">—</b></div></div><div class="mirror-row"><div class="mirror-path"><b>Вторая папка для копий</b><span id="mirrorDirText">Не выбрана — копии только в папке данных.</span><br><span id="mirrorStatus" class="mirror-status"></span></div><div class="stage4-actions"><button type="button" id="mirrorChoose" class="backup-btn">Выбрать папку…</button><button type="button" id="mirrorNow" class="backup-btn">Скопировать сейчас</button><button type="button" id="mirrorClear" class="backup-btn">Отключить</button></div></div><div class="compact-backup-toolbar"><span id="backupStatus" class="backup-status" aria-live="polite"></span></div></div><div class="settings-card stage4-card"><div class="settings-row"><div><b>Обновление приложения</b><span id="updateStatus">Проверка обновлений выполняется вручную или автоматически после запуска.</span></div><div class="stage4-actions"><button type="button" id="checkUpdateBtn" class="backup-btn">Проверить обновления</button><button type="button" id="installUpdateBtn" class="backup-btn stage4-primary" hidden>Установить обновление</button></div></div></div><div class="settings-card"><div class="settings-row archive-clear-row"><div><b>Очистка архивных данных</b><span>Удалить все задачи из архива вместе с их историей. Это действие нельзя отменить.</span></div><div class="archive-clear-side"><span id="archiveClearCount" class="archive-clear-count"></span><button type="button" id="clearArchiveBtn" class="archive-clear-btn">Очистить архив</button></div></div><div class="settings-row"><div><b>Файлы очищенных задач</b><span id="purgeAttachInfo">Вложения задач, которые уже удалены из архива. Перед удалением делается копия базы, а сами файлы ещё 30 дней лежат в папке резервных копий.</span></div><div class="archive-clear-side"><span id="purgeAttachCount" class="archive-clear-count"></span><button type="button" id="purgeAttachBtn" class="archive-clear-btn" disabled>Удалить файлы</button></div></div></div></main>
+
+</div></div>
+
+<dialog id="shiftSummaryDlg" class="shift-summary-dialog">
+  <div class="shift-summary-head">
+    <div>
+      <div class="shift-summary-kicker">КРАТКАЯ СВОДКА</div>
+      <h2>Сводка смены</h2>
+      <p id="shiftSummarySubtitle">Предыдущая смена</p>
+    </div>
+    <button type="button" id="shiftSummaryClose" aria-label="Закрыть">×</button>
+  </div>
+  <div class="shift-summary-body">
+    <div class="shift-summary-stats" id="shiftSummaryStats"></div>
+    <div class="shift-summary-section">
+      <div class="shift-summary-section-title"><span>📋</span><b>Задачи предыдущей смены</b><span id="shiftSummaryTaskCount" class="shift-summary-count"></span></div>
+      <div id="shiftSummaryTasks" class="shift-summary-tasks"></div>
+    </div>
+    <div class="shift-summary-section shift-summary-note-section">
+      <div class="shift-summary-section-title"><span>💬</span><b>Важное</b></div>
+      <div id="shiftSummaryNotes" class="shift-summary-notes"></div>
+    </div>
+    <div class="shift-summary-section" id="shiftSummaryJournalBox" hidden>
+      <div class="shift-summary-section-title"><span>📓</span><b>Журнал смены</b><span id="shiftSummaryJournalCount" class="shift-summary-count"></span></div>
+      <div id="shiftSummaryJournal" class="shift-summary-journal"></div>
+    </div>
+  </div>
+  <div class="shift-summary-footer">
+    <div class="export-btns"><button type="button" id="summaryXlsx" class="shift-summary-all">⬇ Excel</button><button type="button" id="summaryPdf" class="shift-summary-all">⬇ PDF</button></div>
+    <button type="button" id="shiftSummaryAll" class="shift-summary-all">Перейти к задачам</button>
+    <button type="button" id="shiftSummaryOk" class="shift-summary-ok">Ознакомлен</button>
+  </div>
+</dialog>
+<dialog id="clearArchiveDlg" style="max-width:460px;border:1px solid rgba(255,91,95,.45);border-radius:16px;background:#07150f;color:#e8f0ed;padding:0;box-shadow:0 20px 60px rgba(0,0,0,.45)"><div class="dlghead"><h2>Очистить архив?</h2><button type="button" id="clearArchiveClose">×</button></div><div style="padding:0 20px 6px"><p class="muted">Будут удалены <b id="clearArchiveDlgCount">все задачи из архива</b> вместе с их историей.</p><p class="muted">Это действие нельзя отменить.</p></div><div class="buttons" style="padding:16px 20px 20px"><button type="button" id="clearArchiveCancel">Отмена</button><button type="button" id="clearArchiveConfirm" class="archive-btn" style="border-color:rgba(255,77,79,.55);color:#ff5b5f">Очистить архив</button></div></dialog><dialog id="askDlg" class="stage4-dialog"><div style="padding:22px"><h3 id="askTitle" style="margin:0 0 10px"></h3><p id="askText" class="muted" style="margin:0 0 20px;white-space:pre-line"></p><div class="buttons"><button type="button" id="askCancel">Отмена</button><button type="button" id="askOk" class="add">OK</button></div></div></dialog><dialog id="deleteDlg" style="max-width:420px;border:1px solid #38564c;border-radius:16px;background:#07150f;color:#e8f0ed;padding:0;box-shadow:0 20px 60px rgba(0,0,0,.45)">
+  <div style="padding:22px">
+    <h3 style="margin:0 0 10px">Переместить задачу в архив?</h3>
+    <p class="muted" style="margin:0 0 20px">Задача исчезнет из актуального списка, но будет полностью сохранена в архиве вместе с историей.</p>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button type="button" id="deleteCancel">Отмена</button>
+      <button type="button" id="deleteConfirm" class="archive-btn" style="border-color:rgba(255,77,79,.55);color:#ff5b5f">Переместить в архив</button>
+    </div>
+  </div>
+</dialog>
+<dialog id="returnDlg"><form id="returnForm"><div class="dlghead"><h2>Вернуть задачу</h2><button type="button" id="returnClose">×</button></div><p class="muted" id="returnTaskName"></p><label>Почему возвращаете (увидит смена, которая передала)<textarea id="returnComment" required maxlength="500"></textarea></label><div class="buttons"><button type="button" id="returnCancel">Отмена</button><button class="add">↩ &nbsp; Вернуть</button></div></form></dialog><dialog id="restoreDlg"><form id="restoreForm"><div class="dlghead"><h2>Восстановить задачу</h2><button type="button" id="restoreClose">×</button></div><p class="muted" id="restoreTaskName"></p><label id="restoreDeadlineWrap">Новый срок выполнения<input id="restoreDeadline" type="datetime-local"></label><p class="muted" id="restoreHint"></p><div class="buttons"><button type="button" id="restoreCancel">Отмена</button><button class="add">↻ &nbsp; Восстановить</button></div></form></dialog><dialog id="restoreDbDlg" class="stage4-dialog"><div class="dlghead"><h2>Восстановить из бэкапа</h2><button type="button" id="restoreDbClose">×</button></div><div class="stage4-dialog-body"><label class="restore-db-select-label">Выбери резервную копию<select id="restoreDbSelect"></select></label><p class="muted" id="restoreDbName"></p><p class="muted">Перед восстановлением будет автоматически создана страховочная копия текущей базы.</p><p class="stage4-warning">После восстановления приложение перезагрузит данные из выбранной копии.</p></div><div class="buttons"><button type="button" id="restoreDbCancel">Отмена</button><button type="button" id="restoreDbConfirm" class="add">Восстановить</button></div></dialog>
+<dialog id="statsListDlg" class="stats-list-dlg"><div class="dlghead"><h2 id="statsListTitle">Задачи</h2><button type="button" id="statsListClose">×</button></div><p class="muted" id="statsListHint"></p><div id="statsListItems" class="stats-list-items"></div></dialog>
+<dialog id="regDlg" class="reg-dialog"><form id="regForm"><div class="dlghead"><h2 id="regDlgTitle">Регламент</h2><button type="button" id="regClose">×</button></div>
+<label>Задача *<textarea id="regTitle" rows="2" maxlength="300" placeholder="Например: Отбор проб на линии 2"></textarea></label>
+<div class="reg-grid"><label>Приоритет<select id="regPriority"><option>Низкий</option><option selected>Обычный</option><option>Высокий</option></select></label><label>Исполнитель<select id="regAssignee"></select></label><label>Срок, часов от начала<input id="regDeadline" type="number" min="0" max="720" value="0" title="0 — без срока"></label></div>
+<label>Комментарий<textarea id="regComment" rows="2" maxlength="300"></textarea></label>
+<label>Расписание<select id="regKind"><option value="none">Без расписания — только шаблон</option><option value="shift">Каждую смену</option><option value="nthShift">Каждую N-ю смену</option><option value="hours">Каждые N часов внутри смены</option><option value="weekdays">По дням недели</option><option value="everyNDays">Раз в N дней</option><option value="everyNWeeks">Раз в N недель</option><option value="monthDays">По числам месяца</option></select></label>
+<div class="reg-grid" id="regRuleBox"><label data-reg-for="nthShift hours everyNDays everyNWeeks">N<input id="regN" type="number" min="1" max="365" value="1"></label><label data-reg-for="shift nthShift hours weekdays everyNDays everyNWeeks monthDays">Какие смены<select id="regMode"><option value="any">Дневные и ночные</option><option value="day">Только дневные</option><option value="night">Только ночные</option></select></label><label data-reg-for="nthShift everyNDays everyNWeeks">Дата отсчёта<input id="regAnchor" type="date"></label></div>
+<div class="reg-checks" data-reg-for="shift nthShift hours weekdays everyNDays everyNWeeks monthDays"><span class="field-label">Бригады (ничего не отмечено — все)</span><label><input type="checkbox" data-reg-brigade="A">A</label><label><input type="checkbox" data-reg-brigade="B">B</label><label><input type="checkbox" data-reg-brigade="C">C</label><label><input type="checkbox" data-reg-brigade="D">D</label></div>
+<div class="reg-checks" data-reg-for="weekdays everyNWeeks"><span class="field-label">Дни недели</span><label><input type="checkbox" data-reg-day="1">Пн</label><label><input type="checkbox" data-reg-day="2">Вт</label><label><input type="checkbox" data-reg-day="3">Ср</label><label><input type="checkbox" data-reg-day="4">Чт</label><label><input type="checkbox" data-reg-day="5">Пт</label><label><input type="checkbox" data-reg-day="6">Сб</label><label><input type="checkbox" data-reg-day="7">Вс</label></div>
+<label data-reg-for="monthDays">Числа месяца<input id="regMonthDays" type="text" placeholder="например: 1, 15, последнее"></label>
+<div id="regPreview" class="reg-preview" aria-live="polite"></div>
+<div class="buttons"><button type="button" id="regCancel">Отмена</button><button type="submit" id="regSave" class="add">Сохранить</button></div></form></dialog>
+<dialog id="dlg"><form id="form"><div class="dlghead"><h2 id="dlgTitle">Добавить задачу</h2><button type="button" id="close">×</button></div><div id="dlgNotice" class="dlg-notice" hidden></div>
+<div id="fromTemplateRow" class="from-template" hidden><select id="fromTemplate" aria-label="Заполнить из шаблона"><option value="">⧉ Из шаблона…</option></select></div>
+<label>Описание задачи *<textarea id="text" class="auto-grow" rows="2" maxlength="500" required placeholder="Введите описание задачи..."></textarea></label>
+<div class="status-field"><span class="field-label">Статус *</span><div id="statusButtons" class="status-buttons" role="group" aria-label="Статус"><button type="button" data-status="В работе" class="s-work">В работе</button><button type="button" data-status="Выполнена" class="s-done">Выполнена</button><button type="button" data-status="Передать по смене" class="s-pass">Передать по смене</button><button type="button" data-status="Не в работе" class="s-off">Не в работе</button></div><select id="status" class="status-select" aria-label="Статус"><option>В работе</option><option>Выполнена</option><option>Передать по смене</option><option>Не в работе</option></select></div>
+<label>Приоритет *<div class="priorities"><button type="button" data-p="Низкий"><span class="priority-signs">!</span> Низкий</button><button type="button" data-p="Обычный" class="selected"><span class="priority-signs">!!</span> Обычный</button><button type="button" data-p="Высокий"><span class="priority-signs priority-high">!!!</span> Высокий</button></div></label>
+<div id="commentFeed" class="comment-feed" hidden></div>
+<label><span id="commentLabel">Комментарий</span><textarea id="comment" class="auto-grow" rows="2" maxlength="300" placeholder="Добавить комментарий (необязательно)..."></textarea></label>
+<label>Исполнитель<select id="assignee"></select></label>
+<div class="attach-block" id="attachBlock"><div class="attach-head"><b>Вложения</b><button type="button" id="attachAdd" class="attach-add">📎 Прикрепить файлы</button></div><div id="attachList" class="attach-list"></div><div id="attachMsg" class="attach-msg" aria-live="polite"></div></div>
+<label>Срок выполнения<input id="deadline" type="datetime-local"></label>
+<div class="auto"><b>ℹ Информация заполняется автоматически</b><div><span>Технолог<strong id="autoTech">Носиков А.Ю.</strong></span><span>Смена<strong id="autoShift">Смена D</strong></span><span>Дата<strong id="autoDate"></strong></span><span>Время<strong id="autoTime"></strong></span></div></div>
+<div class="buttons"><button type="button" id="cancel">Отмена</button><button class="add" id="dlgSubmit">✓ &nbsp; Создать задачу</button></div></form></dialog>
+<script src="shifts.js"></script>
+<script src="stats.js"></script>
+<script src="reglament.js"></script>
+<script src="journal.js"></script>
+<script src="export.js"></script>
+<script src="comments.js"></script>
+<script src="app.js"></script>
+<script src="ui-reglament.js"></script>
+<script src="ui-journal.js"></script>
+<script src="ui-schedule.js"></script>
+<script src="ui-notify.js"></script>
+<script src="ui-export.js"></script>
+<script src="ui-subtasks.js"></script>
+<script src="ui-watch.js"></script>
+<script src="ui-announce.js"></script>
+<script src="ui-bind.js"></script>
+<script src="ui-whatsnew.js"></script>
+</body></html>
